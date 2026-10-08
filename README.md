@@ -5,7 +5,7 @@
 - 视频精简链接复制
 - 视频链接的 Markdown 格式复制
 <br>
-该脚本由 [SavingPot](https://space.bilibili.com/515982690) 开发，是一款基于 GPL3.0 协议的自由软件，如果程序有问题，欢迎提出 Issue，或是 Fork 后发起 Pull Request 合并仓库。<br>
+该脚本由[SavingPot](https://space.bilibili.com/515982690)开发，是一款基于 GPL3.0 协议的自由软件，如果程序有问题，欢迎提出 Issue，或是 Fork 后发起 Pull Request 合并仓库。<br>
 
 
 <br>
