@@ -4,7 +4,7 @@
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @version      1.2
-// @description  支持B站CC字幕单集与合集/选集批量下载、语言切换、复制查看、多格式导出、窗口拖动、悬浮按钮，以及一键发送字幕到 DeepSeek 生成 Obsidian 笔记
+// @description  详细介绍见 https://github.com/SavingPot/BiliTk
 // @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
 // @match        http*://www.bilibili.com/bangumi/play/ss*
@@ -17,7 +17,6 @@
 // @match        http*://www.bilibili.com/medialist/play/ml*
 // @match        http*://www.bilibili.com/blackboard/html5player.html*
 // @match        https://chat.deepseek.com/*
-// @license      MIT
 // @grant        GM_setClipboard
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
