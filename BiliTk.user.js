@@ -3,8 +3,8 @@
 // @namespace    indefined
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      0.3
-// @description  支持B站CC字幕单集与合集/选集批量下载、语言切换、复制查看、多格式导出、窗口拖动和悬浮按钮
+// @version      0.4
+// @description  支持B站CC字幕单集与合集/选集批量下载、语言切换、复制查看、多格式导出、窗口拖动、悬浮按钮，以及一键发送字幕到 DeepSeek 生成 Obsidian 笔记
 // @author       Wanderland Walker
 // @match        http*://www.bilibili.com/video/*
 // @match        http*://www.bilibili.com/bangumi/play/ss*
@@ -15,14 +15,229 @@
 // @match        https://www.bilibili.com/medialist/play/watchlater/*
 // @match        http*://www.bilibili.com/medialist/play/ml*
 // @match        http*://www.bilibili.com/blackboard/html5player.html*
+// @match        https://chat.deepseek.com/*
 // @license      MIT
 // @grant        GM_setClipboard
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
 // ==/UserScript==
 
 (function () {
   "use strict";
+
+  // ================================================================
+  // DeepSeek 页面侧：接收 B 站传来的字幕并【模拟用户】填入发送
+  // ================================================================
+  const DS_STORAGE_KEY = "bilitk_deepseek_pending_v1";
+
+  function handleDeepSeekPage() {
+    let pending = null;
+    try {
+      pending =
+        typeof GM_getValue === "function"
+          ? GM_getValue(DS_STORAGE_KEY, null)
+          : null;
+    } catch (e) {
+      pending = null;
+    }
+    if (!pending || !pending.text) return;
+
+    // 超过 5 分钟的旧消息忽略，避免重复发送
+    if (pending.ts && Date.now() - pending.ts > 5 * 60 * 1000) {
+      try {
+        GM_deleteValue(DS_STORAGE_KEY);
+      } catch (e) {}
+      return;
+    }
+
+    let done = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60; // 约 30 秒
+    let timer = null;
+
+    const cleanup = () => {
+      done = true;
+      if (timer) clearInterval(timer);
+      try {
+        GM_deleteValue(DS_STORAGE_KEY);
+      } catch (e) {}
+    };
+
+    const findInput = () =>
+      document.querySelector("textarea#chat-input") ||
+      document.querySelector('textarea[placeholder*="DeepSeek"]') ||
+      document.querySelector('textarea[placeholder*="发送"]') ||
+      document.querySelector('textarea[placeholder*="输入"]') ||
+      document.querySelector("textarea") ||
+      document.querySelector('[contenteditable="true"]');
+
+    const findSendButton = (input) => {
+      let node = input.parentElement;
+      for (let depth = 0; depth < 6 && node; depth++) {
+        const candidates = node.querySelectorAll(
+          'div[role="button"], button, .ds-icon-button',
+        );
+        for (const btn of candidates) {
+          if (btn.getAttribute("aria-disabled") === "true") continue;
+          if (btn.disabled) continue;
+          if (btn.querySelector("svg")) return btn;
+        }
+        node = node.parentElement;
+      }
+      return null;
+    };
+
+    // ============ 模拟用户输入：聚焦 → 光标移到末尾 → insertText ============
+    const simulateTyping = (input, text) => {
+      try {
+        input.focus();
+        // 把光标放到已有内容末尾，模拟"接着打字"
+        if (
+          (input.tagName === "TEXTAREA" || input.tagName === "INPUT") &&
+          typeof input.setSelectionRange === "function"
+        ) {
+          const len = input.value.length;
+          input.setSelectionRange(len, len);
+        }
+        // execCommand("insertText") 会触发原生 input 事件，
+        // 对 React / Vue 受控组件同样有效，是最接近"真人键入"的方式
+        const ok = document.execCommand("insertText", false, text);
+        if (ok) return true;
+      } catch (e) {
+        console.warn("[BiliTK→DS] execCommand 键入失败，走兜底方案", e);
+      }
+
+      // ---- 兼容兜底（非首选）：仅当 execCommand 不生效时使用 ----
+      try {
+        if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+          const setter = Object.getOwnPropertyDescriptor(
+            input.tagName === "TEXTAREA"
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype,
+            "value",
+          ).set;
+          setter.call(input, text);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        }
+        // contenteditable 兜底
+        input.textContent = text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      } catch (e) {
+        console.error("[BiliTK→DS] 兜底填入也失败", e);
+        return false;
+      }
+    };
+
+    // ============ 模拟用户按 Enter 发送（首选） ============
+    // 注意：KeyboardEvent 构造函数的 keyCode/which 是只读遗留属性，
+    // 传进 initDict 会被浏览器忽略（永远是 0）。必须用 defineProperty 覆盖，
+    // 否则 React 里判断 e.keyCode===13 的逻辑会当成"没按回车"。
+    const buildEnterEvent = (type) => {
+      const ev = new KeyboardEvent(type, {
+        key: "Enter",
+        code: "Enter",
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      });
+      try {
+        Object.defineProperty(ev, "keyCode", {
+          get: () => 13,
+          configurable: true,
+        });
+        Object.defineProperty(ev, "which", {
+          get: () => 13,
+          configurable: true,
+        });
+        Object.defineProperty(ev, "charCode", {
+          get: () => 13,
+          configurable: true,
+        });
+      } catch (e) {
+        /* 极少数浏览器不允许覆盖，忽略即可 */
+      }
+      return ev;
+    };
+
+    const simulateSend = (input) => {
+      // ① 首选：模拟真人按 Enter
+      try {
+        input.focus();
+        input.dispatchEvent(buildEnterEvent("keydown"));
+        input.dispatchEvent(buildEnterEvent("keypress"));
+        input.dispatchEvent(buildEnterEvent("keyup"));
+      } catch (e) {
+        console.warn("[BiliTK→DS] 模拟 Enter 失败", e);
+      }
+
+      // ② 1 秒后检查：如果输入框已经清空（说明 Enter 生效了），就此结束
+      setTimeout(() => {
+        const stillHasText =
+          input.tagName === "TEXTAREA" || input.tagName === "INPUT"
+            ? input.value.trim().length > 0
+            : (input.innerText || "").trim().length > 0;
+
+        if (!stillHasText) return; // Enter 已成功发送
+
+        // ③ 兜底：Enter 没生效，再点发送按钮
+        const sendBtn = findSendButton(input);
+        if (sendBtn) {
+          sendBtn.click();
+        } else {
+          // ④ 再兜底：用 mouse 事件序列点一下（某些按钮只认 mousedown/mouseup）
+          const fakeClick = (el) => {
+            ["mousedown", "mouseup", "click"].forEach((t) =>
+              el.dispatchEvent(
+                new MouseEvent(t, {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window,
+                }),
+              ),
+            );
+          };
+          const guess =
+            document.querySelector('div[role="button"].ds-icon-button') ||
+            document.querySelector('button[type="submit"]') ||
+            document.querySelector('[class*="send"]');
+          if (guess) fakeClick(guess);
+          else
+            console.warn("[BiliTK→DS] 找不到发送按钮，也无法通过 Enter 发送");
+        }
+      }, 1000);
+    };
+
+    const tryInject = () => {
+      if (done) return;
+      if (++attempts > MAX_ATTEMPTS) return cleanup();
+
+      const input = findInput();
+      if (!input) return;
+
+      if (!simulateTyping(input, pending.text)) return cleanup();
+
+      // 等 React 消化一下再发送（Enter 路径里还有 1s 的二次兜底）
+      setTimeout(() => {
+        simulateSend(input);
+        cleanup();
+      }, 500);
+    };
+
+    timer = setInterval(tryInject, 500);
+    setTimeout(tryInject, 1200); // 页面刚加载时也试一次
+  }
+
+  // 当前在 DeepSeek 页面 → 只跑注入逻辑，直接退出
+  if (location.hostname === "chat.deepseek.com") {
+    handleDeepSeekPage();
+    return;
+  }
 
   const elements = {
     subtitleStyle: `
@@ -2080,7 +2295,7 @@
       if (this.floatButton || !document.body) return;
       const self = this;
 
-      // 外层容器（两个按钮竖向排列）
+      // 外层容器（三个按钮竖向排列）
       this.floatButtonContainer = elements.createAs(
         "div",
         {
@@ -2126,7 +2341,7 @@
         this.floatButtonContainer,
       );
 
-      // 新增：复制 SRT 字幕按钮
+      // 复制 SRT 字幕按钮
       this.copyFloatButton = elements.createAs(
         "div",
         {
@@ -2137,7 +2352,6 @@
             "display:flex;align-items:center;justify-content:center;color:#fff;" +
             "user-select:none;-webkit-tap-highlight-color:transparent;" +
             "transition:transform .15s, box-shadow .15s;",
-          // 用 Lucide 的 "copy" 图标（两个叠方块），描边走 currentColor 取白色
           innerHTML:
             '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" ' +
             'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
@@ -2156,6 +2370,35 @@
           },
           onclick: function () {
             self.copyCurrentSubtitleSRT(this);
+          },
+        },
+        this.floatButtonContainer,
+      );
+
+      // ★ 新增：发送到 DeepSeek 按钮
+      this.deepseekFloatButton = elements.createAs(
+        "div",
+        {
+          id: "cc-subtitle-deepseek-trigger",
+          style:
+            "width:44px;height:44px;background:linear-gradient(135deg,#4d6bfe,#6b83ff);" +
+            "border-radius:12px;box-shadow:0 4px 14px rgba(77,107,254,0.35);cursor:pointer;" +
+            "display:flex;align-items:center;justify-content:center;color:#fff;" +
+            "font-weight:700;font-size:15px;letter-spacing:.5px;font-family:Arial,sans-serif;" +
+            "user-select:none;-webkit-tap-highlight-color:transparent;" +
+            "transition:transform .15s, box-shadow .15s;",
+          innerText: "DS",
+          title: "把当前视频的字幕发送给 DeepSeek，自动整理成 Obsidian 笔记",
+          onmouseenter: function () {
+            this.style.transform = "scale(1.1)";
+            this.style.boxShadow = "0 6px 20px rgba(77,107,254,0.55)";
+          },
+          onmouseleave: function () {
+            this.style.transform = "scale(1)";
+            this.style.boxShadow = "0 4px 14px rgba(77,107,254,0.35)";
+          },
+          onclick: function () {
+            self.sendSubtitleToDeepSeek(this);
           },
         },
         this.floatButtonContainer,
@@ -2233,6 +2476,106 @@
         }
       }
     },
+
+    // ==================== 你的 Obsidian 笔记 SKILL ====================
+    OBSIDIAN_SKILL_PROMPT:
+`你是一个帮助用户整理视频内容的助手。用户会给你一段视频字幕，你需要根据字幕总结视频内容，写成能直接粘贴进 Obsidian 笔记的 Markdown 正文。
+
+【硬性要求，必须严格遵守】
+1. 直接输出笔记正文，不要有任何开场白、说明或收尾语，例如"以下是我给你整理的笔记""希望对你有帮助"之类的话一律不要出现。
+2. 不要向用户提问，不要征询用户意见，只输出成品。
+3. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
+4. 不要添加 YAML front-matter（不写 --- 包围的元数据区）。
+5. 用中文输出；标题、要点、列表、表格、代码块等按需使用，保持层次清晰。
+6. 不要编造字幕里没有的信息；字幕里没提的结论、数据、案例一概不要脑补。
+7. 如果字幕里出现专有名词、人名、产品名、命令、代码等，请保持原文写法。
+
+【建议的笔记结构（可灵活裁剪，视内容而定）】
+# 视频标题
+（一句话概括视频主题）
+
+## 核心内容
+- 主要讲了什么
+- 关键论点 / 知识点
+
+## 要点梳理
+（分段或列表展开，尽可能保留具体的结论、方法、步骤、数据）
+
+【输出格式】
+- 严格输出 Markdown 纯文本，首字符就是笔记内容，不要包裹在代码块里。
+- 如果字幕是外语，请翻译成中文后再整理。`,
+
+    async sendSubtitleToDeepSeek(btn) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+      try {
+        encoder.showToast("正在获取字幕…");
+
+        const subtitle = await this.setupData();
+        if (!subtitle) throw "当前页面还没有读取到视频信息";
+
+        const languages = (subtitle.subtitles || []).filter(
+          (item) => item.lan !== "close" && item.lan !== "local",
+        );
+        if (!languages.length) throw "当前视频没有可用的在线字幕";
+
+        const lan =
+          encoder.currentLan &&
+          languages.some((item) => item.lan === encoder.currentLan)
+            ? encoder.currentLan
+            : languages[0].lan;
+
+        const data = await this.getSubtitle(lan);
+        if (!data || !Array.isArray(data.body) || !data.body.length)
+          throw "字幕内容为空";
+
+        const srt = encoder.encodeToSRT(data.body);
+        const title = this.getInfo("h1Title") || document.title;
+        const lanDoc = (this.getSubtitleInfo(lan) || {}).lan_doc || lan;
+
+        // ===== 组装发送给 DeepSeek 的完整提示词 =====
+        const prompt =
+          this.OBSIDIAN_SKILL_PROMPT +
+          `\n\n===== 以下是要处理的视频字幕 =====\n` +
+          `视频标题：${title}\n` +
+          `字幕语言：${lanDoc}\n` +
+          `字幕条数：${data.body.length}\n\n` +
+          srt;
+
+        // 写入 GM 存储，供 DeepSeek 页面读取
+        let stored = false;
+        try {
+          if (typeof GM_setValue === "function") {
+            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
+            stored = true;
+          }
+        } catch (e) {
+          console.error("[BiliTK→DS] 写入 GM 存储失败", e);
+        }
+
+        // 兜底：同时复制一份到剪贴板
+        await this.copyTextToClipboard(prompt);
+
+        window.open("https://chat.deepseek.com/", "_blank");
+
+        encoder.showToast(
+          stored
+            ? "✅ 已打开 DeepSeek，正在自动发送字幕…"
+            : "✅ 已复制字幕并打开 DeepSeek，请粘贴发送",
+        );
+      } catch (e) {
+        console.error("发送字幕到 DeepSeek 失败", e);
+        encoder.showToast(`❌ 发送失败：${e}`, "error");
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
     async copyTextToClipboard(text) {
       try {
         // ① 油猴 API（最稳，不受 HTTPS 限制）
@@ -2296,7 +2639,8 @@
         );
       addItem("打开字幕下载窗口", () => this.openDownloadDialog());
       addItem("批量下载字幕", () => this.openBatchDialog());
-      addItem("复制当前 SRT 字幕", () => this.copyCurrentSubtitleSRT()); // ← 新增
+      addItem("复制当前 SRT 字幕", () => this.copyCurrentSubtitleSRT());
+      addItem("发送字幕到 DeepSeek", () => this.sendSubtitleToDeepSeek());
       addItem("临时关闭悬浮按钮（本页）", () =>
         this.hideFloatingButtonTemporarily(),
       );
