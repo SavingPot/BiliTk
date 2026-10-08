@@ -5,5 +5,5 @@
 
 
 # 鸣谢
-来自[BiliClipper](https://github.com/echore/bili-clipper)的灵感启发
+来自[BiliClipper](https://github.com/echore/bili-clipper)的灵感启发\n
 来自[ilibili CC Subtitle Tool](https://github.com/WanderLandWalker/Bilibili-CC-Subtitle-Tool)的部分脚本
