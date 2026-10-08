@@ -15,8 +15,8 @@
 
 # 使用方法
 ## 方法一. 手动安装（目前只支持手动安装）
-1. 安装用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)。
-2. 浏览器可能会默认限制用户脚本管理器的功能，所以要现在拓展管理中，打开用户脚本管理器的设置界面，点击允许运行用户脚本
+1. 安装用户脚本管理器（此处以 Tampermonkey 为例），例如 [Tampermonkey](https://www.tampermonkey.net/) 和 [Violentmonkey](https://violentmonkey.github.io/)。
+2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要现在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本
 3. 打开管理器，选择“新建脚本”。
 4. 删除编辑器中的默认内容，将 [Bilibili-CC-Subtitle-Tool.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js) 里的文本全部复制进去。
 5. 保存脚本并启用。
