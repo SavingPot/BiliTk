@@ -16,7 +16,7 @@
 # 使用方法
 ## 方法一. 手动安装（目前只支持手动安装）
 1. 安装用户脚本管理器（此处以 Tampermonkey 为例），例如 [Tampermonkey](https://www.tampermonkey.net/) 和 [Violentmonkey](https://violentmonkey.github.io/)。
-2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要先在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本
+2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要先在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本。
 3. 打开管理器，选择“新建脚本”。
 4. 删除编辑器中的默认内容（务必注意，是所有内容！包括注释！）
 5. 将 [BiliTk.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js) 里的文本全部复制进去。（务必注意，是全部文本，全部文本，全部文本！！！包括注释，包括注释，包括注释！！！！！！！！）
