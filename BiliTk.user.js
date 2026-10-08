@@ -1,17 +1,18 @@
 // ==UserScript==
 // @name         BiliTK B站工具
-// @namespace    indefined
+// @namespace    https://github.com/SavingPot/BiliTk
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      0.4
+// @version      1.2
 // @description  支持B站CC字幕单集与合集/选集批量下载、语言切换、复制查看、多格式导出、窗口拖动、悬浮按钮，以及一键发送字幕到 DeepSeek 生成 Obsidian 笔记
-// @author       Wanderland Walker
+// @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
 // @match        http*://www.bilibili.com/bangumi/play/ss*
 // @match        http*://www.bilibili.com/bangumi/play/ep*
 // @match        https://www.bilibili.com/cheese/play/ss*
 // @match        https://www.bilibili.com/cheese/play/ep*
 // @match        http*://www.bilibili.com/list/watchlater*
+// @match        http*://www.bilibili.com/list/ml*
 // @match        https://www.bilibili.com/medialist/play/watchlater/*
 // @match        http*://www.bilibili.com/medialist/play/ml*
 // @match        http*://www.bilibili.com/blackboard/html5player.html*
@@ -23,6 +24,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        unsafeWindow
 // ==/UserScript==
 
 (function () {
@@ -90,11 +92,42 @@
       return null;
     };
 
-    // ============ 模拟用户输入：聚焦 → 光标移到末尾 → insertText ============
+    // ============ 模拟用户输入 ============
+    // 【改进点 4】反转注入优先级：
+    //   原实现把已废弃的 execCommand("insertText") 当首选，把 React 受控组件
+    //   的标准注入方式（原生 value setter + input 事件）当兜底。实际上
+    //   execCommand 在新版 Chromium 对 contenteditable 经常静默失败
+    //   （返回 true 但没插入）。value setter 才是 React 官方推荐的外部写入方式。
     const simulateTyping = (input, text) => {
+      // ① 首选：原生 value setter + input/change 事件（React 会感知）
+      try {
+        if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+          const proto =
+            input.tagName === "TEXTAREA"
+              ? window.HTMLTextAreaElement.prototype
+              : window.HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+          input.focus();
+          setter.call(input, text);
+          // React 受控组件监听的是 input 事件（onChange 实际映射到原生 input）
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+          return true;
+        }
+        // contenteditable 元素：直接改 textContent 并派发 input 事件
+        input.focus();
+        input.textContent = text;
+        input.dispatchEvent(
+          new InputEvent("input", { bubbles: true, cancelable: true }),
+        );
+        return true;
+      } catch (e) {
+        console.warn("[BiliTK→DS] value setter 注入失败，尝试 execCommand", e);
+      }
+
+      // ② 兜底：execCommand("insertText")（已废弃，但某些老环境仍可用）
       try {
         input.focus();
-        // 把光标放到已有内容末尾，模拟"接着打字"
         if (
           (input.tagName === "TEXTAREA" || input.tagName === "INPUT") &&
           typeof input.setSelectionRange === "function"
@@ -102,34 +135,9 @@
           const len = input.value.length;
           input.setSelectionRange(len, len);
         }
-        // execCommand("insertText") 会触发原生 input 事件，
-        // 对 React / Vue 受控组件同样有效，是最接近"真人键入"的方式
-        const ok = document.execCommand("insertText", false, text);
-        if (ok) return true;
+        return document.execCommand("insertText", false, text);
       } catch (e) {
-        console.warn("[BiliTK→DS] execCommand 键入失败，走兜底方案", e);
-      }
-
-      // ---- 兼容兜底（非首选）：仅当 execCommand 不生效时使用 ----
-      try {
-        if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
-          const setter = Object.getOwnPropertyDescriptor(
-            input.tagName === "TEXTAREA"
-              ? window.HTMLTextAreaElement.prototype
-              : window.HTMLInputElement.prototype,
-            "value",
-          ).set;
-          setter.call(input, text);
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          return true;
-        }
-        // contenteditable 兜底
-        input.textContent = text;
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        return true;
-      } catch (e) {
-        console.error("[BiliTK→DS] 兜底填入也失败", e);
+        console.error("[BiliTK→DS] execCommand 也失败", e);
         return false;
       }
     };
@@ -535,6 +543,16 @@
       });
       return this.dragMap.get(container);
     },
+    // 【改进点 13】统一 toast 实现：
+    //   统一转发到 encoder.showToast，保证全局只有一份 toast 实现。
+    //   因为 encoder 定义在后面，这里用 typeof 做运行时检查。
+    showToast(message, type = "success") {
+      if (typeof encoder !== "undefined" && encoder.showToast) {
+        encoder.showToast(message, type);
+        return;
+      }
+      console.warn("[BiliTK toast]", message);
+    },
     saveState(key, state) {
       try {
         localStorage.setItem(key, JSON.stringify(state));
@@ -601,7 +619,7 @@
       "Format: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text",
     ],
 
-    // ==================== 新增：拖动相关变量 ====================
+    // ==================== 拖动相关变量 ====================
     isDragging: false,
     dragOffsetX: 0,
     dragOffsetY: 0,
@@ -613,7 +631,7 @@
     formatSelect: null,
     resizeContainer: null,
 
-    // ==================== 修改：移除遮罩层，直接创建可拖动对话框 ====================
+    // ==================== 显示字幕窗口 ====================
     showDialog(data, download, lan) {
       if (!data || !(data.body instanceof Array)) {
         throw "数据错误";
@@ -844,11 +862,20 @@
           innerText: "关闭",
           style:
             "height: 24px;margin-right: 5px;background: #00a1d6;color: #fff;padding: 7px;cursor: pointer;",
-          onclick: () => document.body.removeChild(settingDiv),
+          onclick: () => {
+            // 【改进点 2】关闭对话框前先清理拖动监听，避免全局监听泄漏
+            if (typeof this._destroyDrag === "function") {
+              this._destroyDrag();
+              this._destroyDrag = null;
+            }
+            document.body.removeChild(settingDiv);
+          },
         },
         bottomPanel,
       );
-      this.initDragging(header, panel);
+
+      // 【改进点 2】保存销毁函数，关闭对话框时用来清理全局拖动监听
+      this._destroyDrag = this.initDragging(header, panel);
 
       // 默认转换SRT格式
       this.updateDownload(type, download);
@@ -943,12 +970,15 @@
       });
     },
 
-    // ==================== 修改：改进拖动功能 ====================
+    // ==================== 拖动功能 ====================
+    // 【改进点 2】把拖动监听抽成命名函数，并返回 destroy 函数。
+    //   原实现每次 showDialog 都会往 document 上挂一份 mousemove / mouseup，
+    //   但从不移除。开关窗口 20 次就会有 20 份监听在跑，越拖越卡。
+    //   现在由调用方在对话框关闭时调用 destroy 清理。
     initDragging(handle, container) {
       const self = this;
 
-      //按下左键，开始拖动
-      handle.addEventListener("mousedown", function (e) {
+      const onMouseDown = function (e) {
         // 排除点击按钮或版本链接的情况，避免意外拖动
         if (
           e.target.tagName === "BUTTON" ||
@@ -956,44 +986,29 @@
           e.target.innerHTML === "×"
         )
           return;
-
-        // 阻止事件冒泡，防止被其他元素拦截
         e.stopPropagation();
-
         self.isDragging = true;
-
-        //获取 offset，防止窗口瞬移
         const rect = container.getBoundingClientRect();
         self.dragOffsetX = e.clientX - rect.left;
         self.dragOffsetY = e.clientY - rect.top;
-
-        // 改变光标样式
         handle.style.cursor = "grabbing";
         container.style.transition = "none";
-
         e.preventDefault();
-      });
+      };
 
-      //拖动（使用全局事件监听，确保拖动流畅）
       const onMouseMove = function (e) {
         if (!self.isDragging) return;
-
         const x = e.clientX - self.dragOffsetX;
         const y = e.clientY - self.dragOffsetY;
-
-        // 限制在视窗内
         const maxX = window.innerWidth - container.offsetWidth;
         const maxY = window.innerHeight - container.offsetHeight;
-
         const clampedX = Math.max(0, Math.min(x, maxX));
         const clampedY = Math.max(0, Math.min(y, maxY));
-
         container.style.left = clampedX + "px";
         container.style.top = clampedY + "px";
         container.style.transform = "none";
       };
 
-      //松开左键，停止拖动
       const onMouseUp = function () {
         if (self.isDragging) {
           self.isDragging = false;
@@ -1002,15 +1017,19 @@
         }
       };
 
+      handle.addEventListener("mousedown", onMouseDown);
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
 
-      // 保存监听器引用以便清理（可选）
-      this._dragMoveHandler = onMouseMove;
-      this._dragUpHandler = onMouseUp;
+      // 返回销毁函数，供对话框关闭时调用
+      return function destroy() {
+        handle.removeEventListener("mousedown", onMouseDown);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
     },
 
-    // ==================== 新增：一键复制功能 ====================
+    // ==================== 一键复制功能 ====================
     copyToClipboard() {
       const text = this.textArea.value;
       if (!text || text.length === 0) {
@@ -1220,13 +1239,24 @@
     data: undefined,
     statusHandler: undefined,
 
-    // ==================== 新增：拖动相关变量 ====================
+    // ==================== 拖动相关变量 ====================
     isDragging: false,
     dragOffsetX: 0,
     dragOffsetY: 0,
 
     show(handler) {
       this.statusHandler = handler;
+
+      // 【改进点 15】判空播放器容器：
+      //   某些页面（独立播放器、番剧切换中）可能没有 #bilibiliPlayer，
+      //   此时 createAs 的 appendTo 为 null 会被静默跳过，导致面板
+      //   "打不开"却毫无提示。这里显式判空并给出可读的反馈。
+      const playerEl = elements.getAs("#bilibiliPlayer");
+      if (!playerEl) {
+        bilibiliCCHelper.toast("找不到播放器容器，无法打开本地字幕面板");
+        return;
+      }
+
       if (!this.dialog) {
         this.moveAction = (ev) => this.dialogMove(ev);
         this.dialog = elements.createAs(
@@ -1236,7 +1266,7 @@
             style:
               "position:fixed;z-index:1048576;padding:10px;top:50%;left:calc(50% - 185px);box-shadow: 0 0 4px #e5e9ef;border: 1px solid #e5e9ef;background:white;border-radius:5px;color:#99a2aa",
           },
-          elements.getAs("#bilibiliPlayer"),
+          playerEl,
         );
         // 标题栏，保留拖动功能
         const header = elements.createAs(
@@ -1313,31 +1343,39 @@
             style: "margin-left: 10px;border:none;width:max-content;",
             innerText: "关闭面板",
             className: "bpui-button bui bui-button bui-button-blue",
-            onclick: () =>
-              elements.getAs("#bilibiliPlayer").removeChild(this.dialog),
+            onclick: () => {
+              // 【改进点 2】关闭面板前清理拖动监听
+              if (typeof this._destroyDrag === "function") {
+                this._destroyDrag();
+                this._destroyDrag = null;
+              }
+              playerEl.removeChild(this.dialog);
+            },
           },
           this.dialog,
         );
         this.reader = new FileReader();
         this.reader.onloadend = () => this.decodeFile();
         this.reader.onerror = (e) => bilibiliCCHelper.toast("载入字幕失败", e);
-        this.initDragging(header, this.dialog);
+        // 保存 header 引用，供后续重绑拖动使用
+        this._dragHandle = header;
       } else {
-        elements.getAs("#bilibiliPlayer").appendChild(this.dialog);
+        playerEl.appendChild(this.dialog);
         this.handleSubtitle();
       }
+
+      // 【改进点 2】每次显示都重新绑定拖动监听（上次关闭时已销毁）
+      if (typeof this._destroyDrag === "function") this._destroyDrag();
+      this._destroyDrag = this.initDragging(this._dragHandle, this.dialog);
     },
 
-    // ==================== 修改：改进本地字幕对话框拖动 ====================
+    // 【改进点 2】同 encoder.initDragging：返回 destroy 供关闭时清理监听
     initDragging(handle, container) {
       const self = this;
 
-      handle.addEventListener("mousedown", function (e) {
+      const onMouseDown = function (e) {
         if (e.target.innerHTML === "×") return; // 排除关闭按钮
-
-        // 阻止事件冒泡
         e.stopPropagation();
-
         self.isDragging = true;
         const rect = container.getBoundingClientRect();
         self.dragOffsetX = e.clientX - rect.left;
@@ -1345,13 +1383,12 @@
         handle.style.cursor = "grabbing";
         container.style.transition = "none";
         e.preventDefault();
-      });
+      };
 
       const onMouseMove = function (e) {
         if (!self.isDragging) return;
         const x = e.clientX - self.dragOffsetX;
         const y = e.clientY - self.dragOffsetY;
-        // 限制在视窗内
         const maxX = window.innerWidth - container.offsetWidth;
         const maxY = window.innerHeight - container.offsetHeight;
         container.style.left = Math.max(0, Math.min(x, maxX)) + "px";
@@ -1366,8 +1403,15 @@
         }
       };
 
+      handle.addEventListener("mousedown", onMouseDown);
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
+
+      return function destroy() {
+        handle.removeEventListener("mousedown", onMouseDown);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
     },
 
     dialogMove(ev) {
@@ -2291,11 +2335,37 @@
         this.toggleFloatingButtonGlobal(),
       );
     },
+
+    // =========================================================
+    // 【需求 1/2/3】悬浮按钮群：
+    //   ① 字幕批量下载（原 ⭐ 按钮，变量名 floatButton → subtitleBatchButton）
+    //   ② 一键复制 SRT（原功能）
+    //   ③ 复制标准视频链接
+    //   ④ 复制 Markdown 链接
+    //   ⑤ 发送到 DeepSeek（原功能）
+    // =========================================================
     createFloatingButton() {
-      if (this.floatButton || !document.body) return;
+      // 【改进点 6】等 DOM 就绪：
+      //   原条件是 `if (this.floatButton || !document.body) return;`
+      //   如果脚本在 <head> 里抢先执行、document.body 尚不存在，
+      //   这里会直接 return 且之后再无重试，悬浮按钮永远不出现。
+      //   现在改为等 DOMContentLoaded 或轮询重试。
+      if (this.subtitleBatchButton) return;
+      if (!document.body) {
+        if (document.readyState === "loading") {
+          document.addEventListener(
+            "DOMContentLoaded",
+            () => this.createFloatingButton(),
+            { once: true },
+          );
+        } else {
+          setTimeout(() => this.createFloatingButton(), 100);
+        }
+        return;
+      }
       const self = this;
 
-      // 外层容器（三个按钮竖向排列）
+      // 外层容器（按钮竖向排列）
       this.floatButtonContainer = elements.createAs(
         "div",
         {
@@ -2307,19 +2377,26 @@
         document.body,
       );
 
-      // 原下载按钮
-      this.floatButton = elements.createAs(
+      // 【需求 1】字幕批量下载（原 ⭐ 按钮）
+      this.subtitleBatchButton = elements.createAs(
         "div",
         {
-          id: "cc-subtitle-download-trigger",
+          id: "cc-subtitle-batch-trigger",
           style:
             "width:44px;height:44px;background:linear-gradient(135deg,#00a1d6,#00b5e5);" +
             "border-radius:12px;box-shadow:0 4px 14px rgba(0,161,214,0.35);cursor:pointer;" +
-            "display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;" +
+            "display:flex;align-items:center;justify-content:center;color:#fff;" +
             "user-select:none;-webkit-tap-highlight-color:transparent;" +
             "transition:transform .15s, box-shadow .15s;",
-          innerHTML: "⭐",
-          title: "字幕下载 — 左键打开，右键设置",
+          innerHTML:
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" ' +
+            'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+            'stroke-linejoin="round">' +
+            '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+            '<polyline points="7 10 12 15 17 10"/>' +
+            '<line x1="12" y1="15" x2="12" y2="3"/>' +
+            "</svg>",
+          title: "字幕批量下载 — 左键打开，右键设置",
           onmouseenter: function () {
             this.style.transform = "scale(1.1)";
             this.style.boxShadow = "0 6px 20px rgba(0,161,214,0.55)";
@@ -2341,7 +2418,7 @@
         this.floatButtonContainer,
       );
 
-      // 复制 SRT 字幕按钮
+      // 一键复制 SRT 字幕（原功能）
       this.copyFloatButton = elements.createAs(
         "div",
         {
@@ -2375,7 +2452,72 @@
         this.floatButtonContainer,
       );
 
-      // ★ 新增：发送到 DeepSeek 按钮
+      // 【需求 2】复制标准视频链接
+      this.copyLinkButton = elements.createAs(
+        "div",
+        {
+          id: "cc-copy-link-trigger",
+          style:
+            "width:44px;height:44px;background:linear-gradient(135deg,#ff9800,#ffb74d);" +
+            "border-radius:12px;box-shadow:0 4px 14px rgba(255,152,0,0.35);cursor:pointer;" +
+            "display:flex;align-items:center;justify-content:center;color:#fff;" +
+            "user-select:none;-webkit-tap-highlight-color:transparent;" +
+            "transition:transform .15s, box-shadow .15s;",
+          innerHTML:
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" ' +
+            'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+            'stroke-linejoin="round">' +
+            '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+            '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' +
+            "</svg>",
+          title: "复制当前视频的标准链接",
+          onmouseenter: function () {
+            this.style.transform = "scale(1.1)";
+            this.style.boxShadow = "0 6px 20px rgba(255,152,0,0.55)";
+          },
+          onmouseleave: function () {
+            this.style.transform = "scale(1)";
+            this.style.boxShadow = "0 4px 14px rgba(255,152,0,0.35)";
+          },
+          onclick: function () {
+            self.copyVideoLink(this);
+          },
+        },
+        this.floatButtonContainer,
+      );
+
+      // 【需求 3】复制 Markdown 链接
+      this.copyMdLinkButton = elements.createAs(
+        "div",
+        {
+          id: "cc-copy-md-link-trigger",
+          style:
+            "width:44px;height:44px;background:linear-gradient(135deg,#9c27b0,#b968c7);" +
+            "border-radius:12px;box-shadow:0 4px 14px rgba(156,39,176,0.35);cursor:pointer;" +
+            "display:flex;align-items:center;justify-content:center;color:#fff;" +
+            "user-select:none;-webkit-tap-highlight-color:transparent;" +
+            "transition:transform .15s, box-shadow .15s;",
+          innerHTML:
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">' +
+            '<path d="M3 5h2.5l2.5 4 2.5-4H13v14h-2.5v-9.5L8 13 5.5 9.5V19H3V5zm12 0h2.5v9h2.5l-3.75 5L12.5 14h2.5V5z"/>' +
+            "</svg>",
+          title: "复制为 Markdown 链接：[标题](链接)",
+          onmouseenter: function () {
+            this.style.transform = "scale(1.1)";
+            this.style.boxShadow = "0 6px 20px rgba(156,39,176,0.55)";
+          },
+          onmouseleave: function () {
+            this.style.transform = "scale(1)";
+            this.style.boxShadow = "0 4px 14px rgba(156,39,176,0.35)";
+          },
+          onclick: function () {
+            self.copyVideoLinkMarkdown(this);
+          },
+        },
+        this.floatButtonContainer,
+      );
+
+      // 发送到 DeepSeek（原功能）
       this.deepseekFloatButton = elements.createAs(
         "div",
         {
@@ -2406,6 +2548,7 @@
 
       this.applyFloatingButtonVisibility();
     },
+
     applyFloatingButtonVisibility() {
       if (!this.floatButtonContainer) return;
       const state = uiManager.loadState(this.floatButtonPrefKey, {
@@ -2477,33 +2620,414 @@
       }
     },
 
-    // ==================== 你的 Obsidian 笔记 SKILL ====================
-    OBSIDIAN_SKILL_PROMPT:
-`你是一个帮助用户整理视频内容的助手。用户会给你一段视频字幕，你需要根据字幕总结视频内容，写成能直接粘贴进 Obsidian 笔记的 Markdown 正文。
+    // =========================================================
+    // 【需求 2】标准化视频链接
+    // 规则：
+    //   普通视频 → https://www.bilibili.com/video/BVxxx（多P时带 ?p=N）
+    //   番剧     → https://www.bilibili.com/bangumi/play/epxxxx / ssxxxx
+    //   课程     → https://www.bilibili.com/cheese/play/epxxxx / ssxxxx
+    //   其它页面 → 用 origin + pathname 兜底
+    // =========================================================
+    getStandardVideoUrl() {
+      const pathname = location.pathname;
+      const search = location.search;
+
+      // 番剧 / 课程 单集：ep
+      let m = pathname.match(/\/(bangumi|cheese)\/play\/ep(\d+)/i);
+      if (m) {
+        return `https://www.bilibili.com/${m[1].toLowerCase()}/play/ep${m[2]}`;
+      }
+
+      // 番剧 / 课程 整季：ss
+      m = pathname.match(/\/(bangumi|cheese)\/play\/ss(\d+)/i);
+      if (m) {
+        return `https://www.bilibili.com/${m[1].toLowerCase()}/play/ss${m[2]}`;
+      }
+
+      // 普通视频：从 path、query、页面数据里依次尝试拿到 bvid
+      const params = new URLSearchParams(search);
+      const bvid =
+        (pathname.match(/\/video\/(BV[0-9A-Za-z]+)/) || [])[1] ||
+        params.get("bvid") ||
+        this.getInfo("bvid") ||
+        this.bvid;
+
+      if (bvid) {
+        // 多P视频带上当前分P
+        let p = this.window && this.window.__INITIAL_STATE__?.p;
+        if (!p) p = +(params.get("p") || 1);
+        return (
+          `https://www.bilibili.com/video/${bvid}` + (p > 1 ? `?p=${p}` : "")
+        );
+      }
+
+      // 兜底：不认识的页面，直接给 origin + pathname，避免带一堆追踪参数
+      return location.origin + pathname;
+    },
+
+    // 取一个干净的视频标题（去掉“_哔哩哔哩_bilibili”这类后缀）
+    getCleanTitle() {
+      let title =
+        this.getInfo("h1Title") ||
+        this.window?.__INITIAL_STATE__?.videoData?.title ||
+        this.window?.__INITIAL_STATE__?.epInfo?.title ||
+        document.title ||
+        "";
+      title = String(title)
+        .replace(/[_\-|]\s*(哔哩哔哩|bilibili).*$/i, "")
+        .trim();
+      return title || "视频";
+    },
+
+    // 【需求 2】复制标准视频链接
+    async copyVideoLink(btn) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+      try {
+        const url = this.getStandardVideoUrl();
+        if (!url) throw "无法获取视频链接";
+        const ok = await this.copyTextToClipboard(url);
+        if (!ok) throw "浏览器拒绝了剪贴板访问";
+        encoder.showToast("✅ 已复制视频链接");
+      } catch (e) {
+        console.error("复制视频链接失败", e);
+        encoder.showToast(`❌ 复制失败：${e}`, "error");
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
+    // 【需求 3】复制 Markdown 链接 [标题](链接)
+    async copyVideoLinkMarkdown(btn) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+      try {
+        const url = this.getStandardVideoUrl();
+        if (!url) throw "无法获取视频链接";
+        const title = this.getCleanTitle();
+        const text = `[${title}](${url})`;
+        const ok = await this.copyTextToClipboard(text);
+        if (!ok) throw "浏览器拒绝了剪贴板访问";
+        encoder.showToast("✅ 已复制 Markdown 链接");
+      } catch (e) {
+        console.error("复制 Markdown 链接失败", e);
+        encoder.showToast(`❌ 复制失败：${e}`, "error");
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
+    // ==================== Obsidian 笔记 SKILL ====================
+    OBSIDIAN_SKILL_PROMPT: `你是一个帮助用户整理视频内容的助手。用户会给你一段视频字幕，你需要根据字幕总结视频内容，写成能直接粘贴进 Obsidian 笔记的 Markdown 正文。
 
 【硬性要求，必须严格遵守】
-1. 直接输出笔记正文，不要有任何开场白、说明或收尾语，例如"以下是我给你整理的笔记""希望对你有帮助"之类的话一律不要出现。
-2. 不要向用户提问，不要征询用户意见，只输出成品。
-3. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
-4. 不要添加 YAML front-matter（不写 --- 包围的元数据区）。
-5. 用中文输出；标题、要点、列表、表格、代码块等按需使用，保持层次清晰。
-6. 不要编造字幕里没有的信息；字幕里没提的结论、数据、案例一概不要脑补。
-7. 如果字幕里出现专有名词、人名、产品名、命令、代码等，请保持原文写法。
+1. 字幕预处理：
+  1. 语音识别问题：由于字幕通常是 AI 识别的，所以可能会有一些问题，例如脑雾被识别成脑物，Trae Work 变成吹work，WorkBuddy 变成 work body。如果你可以肯定字幕一定是写错了，就先更改后再整理。
+  2. 翻译问题：部分字幕是翻译自外文的，所以可能有问题，比如 Doom 被翻译成厄运之类的，或者是语句很奇怪，你可以在确保不会产生歧义且不会影响原意的前提下重构句子，让句子变正常。
+2. 不要编造字幕里没有的信息；字幕里没提的结论、数据、案例一概不要脑补。
+3. 如果字幕里出现专有名词、人名、产品名、命令、代码等，请保持原文写法。
+4. 不要向用户提问，不要征询用户意见，只输出成品。
+5. 直接输出笔记正文，不要有任何开场白、说明或收尾语，例如"以下是我给你整理的笔记""希望对你有帮助"之类的话一律不要出现。
+6. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
+7. 用中文输出；标题、要点、列表、表格、代码块、Emoji等可以按需使用，以此让层次清晰、笔记易读。
+
 
 【建议的笔记结构（可灵活裁剪，视内容而定）】
-# 视频标题
-（一句话概括视频主题）
+# 概要
+- 视频标题
+- 视频主题/核心问题（范例：第二故事设计困境、系统叙事、打破规则、开发经验教训）
 
-## 核心内容
-- 主要讲了什么
+# 核心内容
 - 关键论点 / 知识点
+- 最终结论
 
-## 要点梳理
-（分段或列表展开，尽可能保留具体的结论、方法、步骤、数据）
 
-【输出格式】
-- 严格输出 Markdown 纯文本，首字符就是笔记内容，不要包裹在代码块里。
-- 如果字幕是外语，请翻译成中文后再整理。`,
+
+以下是范例：
+# AI 与自媒体：人机协作的实践与思考
+
+> 视频来源：B站 UP主“阿泰”（知识区）  
+> 主题：AI 时代做视频还需要人吗？如何与 AI 相处？以及字节“吹work AI知识库”实战体验
+
+---
+
+## 一、背景与焦虑
+
+- **现象**：网上大量短剧、直播、美女视频，甚至评论区互动，全部由 AI 生成，真假难辨。
+- **AI 内容生产现状**：
+  - 文案、配音、画面、剪辑、账号运营均可由 AI 完成。
+  - 传统视频制作：写稿 3-4 天，后期剪辑 4 天，复杂片子拍摄 7 天、写稿 3 天、后期 20 天。
+  - AI 知识区视频：一个人、一台电脑、一天可生产几十条，质量还不差。
+- **UP主的恐慌**：
+  - 不用 AI，效率拼不过别人。
+  - 用 AI，担心内容变成标准答案，观点平均，人会不会“用废”。
+
+## 二、核心问题：把什么交给 AI，什么留给自己？
+
+- **AI 的本质**：概率计算，从已有信息中找共性，给出最稳妥、不出错的答案。
+- **好内容需要**：人的选择、判断、与现有内容的差异。
+- **人机协作原则**：
+  - **AI 负责扩大可能性、激发问题**。
+  - **人负责做出判断、决定相信什么、表达什么**。
+  - AI 是站在旁边的“他者”，不是直接给答案的先知。
+
+## 三、Trae Work AI知识库：是什么？
+
+字节跳动旗下官方 AI 知识库，解决“AI 很强但不知道怎么用”的问题。
+
+### 主要内容板块
+
+| 板块 | 内容 |
+|---|---|
+| 新手入门 | 快速认识 Trae Work：安装、界面布局、三种模式 |
+| AI 通识方法论 | 系统讲解 skill、MCP、prompt engineering 等技术名词 |
+| 官方功能教程 | 产品基本逻辑与操作方式 |
+| 实战指南 | 超 30 份，覆盖教育学习、个人成长、文档写作、数据处理、汇报演示等 7 大工作场景 |
+| 工具资源推荐 | skill 推荐与说明，如研发十大 skill、产品经理六大 skill、14 个值得安装的 skill |
+
+- **特点**：免费、持续更新、事无巨细，比网上卖几十上百的 AI 网课更全面系统。
+
+## 四、实战案例
+
+### 1. 选题雷达（找选题 → 筛选题）
+
+- **步骤**：
+  1. 让 Trae Work 分析账号和历史视频，总结重点深耕的 5 个行业/领域，给出视频数占比、总播放量（顺手完成账号复盘）。
+  2. 生成行业热点日报（覆盖 5 大领域，38 条新闻），按实战指南提示词整理。
+  3. 让 AI 总结适合“阿泰”视频的选题判断标准（反直觉、悬念性、争议空间、产业链可拆解、深度数据实测、可支撑性）。
+  4. 让 AI 给每个选题打分，筛选出得分最高的 3-5 个，输出标题雏形、一句话钩子、核心矛盾、大众入口、可深挖知识增量。
+  5. 做成定时任务，每晚十点自动推送。
+- **结果**：得到一台“每天准时上菜的阿泰选题雷达”，稳定产出候选选题。
+
+### 2. 选题体检器（进一步筛选）
+
+- **流程**：
+  1. 将选题拆成 3-5 个核心问题。
+  2. 整理数据、案例和观点，标注信息来源与可信度。
+  3. 站在反方给逻辑和证据挑漏洞。
+- **成果**：生成研究底稿，含思维导图、数据表，指出关键盲区，重新定义选题。  
+  案例：选题“网吧为什么又活过来了” → 快速生成底稿，判断是否值得做。
+
+### 3. 代码审查 skill
+
+- **问题**：不懂编程，AI 给代码声称算出了结果，但无法判断真伪。
+- **解决**：知识库推荐“代码审查 skill”，AI 写出代码后可调用该 skill 审查，找出 bug 和质量问题。
+
+### 4. 华语乐坛巅峰 skill
+
+- **目标**：用 2000-2009 华语乐坛 Top100 制作一个 skill，辅助编曲。
+- **原方案**：让模型理解 100 首歌 → 给定主题 → 找曲风 → 给 AI 做歌软件 Suno 写提示词。
+- **知识库教程收获**：
+  - 最好的操作不是直接告诉 AI 要什么，而是先跟 AI 一起跑通一次任务，把过程做成 skill。
+  - 好的 skill 需要持续迭代优化。
+- **迭代后**：找出示例歌曲后，再对每首歌进行网络搜索，理解创作理念和背景故事，使提示词更贴合需求。
+
+### 5. 卖了么 App 开发（AI 编程）
+
+- **项目**：炒股自用 App，监测牛市何时结束，防止手欠涨一点就卖。
+- **功能**：拦截券商应用、写忏悔语录才能打开的密码本、接入券商 API、牛市逃顶指数监测器。
+- **难点**：功能多，写不出条理清晰的需求文档，只能逐步开发 1.0、2.0、3.0，重复造轮子。
+- **知识库解决方案**：实战指南《编写产品技术与规范资料》给出四步流程：
+  1. 写需求文档（告诉 AI 想要什么，或让 AI 以专家身份生成）。
+  2. 根据需求文档生成原型 Demo（功能、界面）。
+  3. 根据需求文档和原型图，让 AI 写技术文档（先定技术方案）。
+  4. 根据技术文档生成测试文档，开发结束后检查。
+- **结果**：按此流程生成原型图，后续开发更游刃有余。
+
+### 6. 工具资源推荐（精华）
+
+- **systematic debugging**：让 debug 从“问 AI 你错哪了”转变为系统性排查，三次修不好自动质疑思路，重新换方案。
+- **前端设计 skill**：摆脱 AI 生成界面的千篇一律（大黑底 + 几个颜色模块）。
+
+## 五、总结与展望
+
+- **AI 对自媒体的意义**：不是冲击，而是拥抱。让内容有更多可能性（如华语巅峰歌手写歌、建模预测世界杯），曾经需要大量人力物力的活儿，现在个人也能做。
+- **AI 是未来必须拥抱的趋势**：如同当年的互联网浪潮，即使有产业泡沫，也会改变工作方式、生活方式乃至社会运行方式。
+- **当下困扰**：不是 AI 离我们太远，而是 AI 变化太快，知识良莠不齐，让人焦虑。
+- **吹work AI知识库的价值**：
+  - 全网免费公开，持续更新。
+  - 一份事无巨细的 AI 说明书。
+  - 降低 AI 时代的学习门槛，让普通人理解 AI、使用 AI，并在技术变革中找到自己的位置。
+
+> **核心结论**：好的人机协作，不是把人从创作里删掉，而是把人从杂活里解放出来。最终选什么、相信什么、表达什么，仍由自己负责。
+
+
+
+
+
+
+
+# 健身的“少即是多”：做得少反而更自律
+
+> 核心观点：每周练 6 天、把自己练到力竭，不一定有效；每周练 3 天、只做 5 个动作、留足恢复，反而进步更快。区别在于**懂得忽略什么**。
+
+---
+
+## 一、训练频率：每周 2-3 次，同一肌群 2-3 次
+
+- 每周训练 2-3 次，同一块肌肉每周训练 2-3 次，是增肌的最佳频率。
+- 身体既能获得足够刺激，又能充分恢复。
+- 研究证实：**肌肉只在乎每周总组数**。12 组就是 12 组，分 3 天还是 6 天做完都一样。
+- 每天练的人以为练得越多越好；每周练 3 次的人该练的都练到，恢复到位，从不力竭崩溃。
+
+**关键区别**：
+- 每天训练却没有恢复计划 → 没有自律。
+- 训练感觉像逃不掉的会议室 → 很容易失去动力。
+
+---
+
+## 二、动作选择：专注复合动作
+
+- 复合动作一次练到多个肌群：
+  - 引体向上 → 背阔肌、二头肌、前臂、核心
+  - 双杠臂屈伸 → 胸、三头肌、肩膀
+  - 深蹲 → 股四头肌、臀大肌、腘绳肌、核心
+- 研究显示：只做复合动作的训练计划，增肌效果**不输**加上孤立动作的计划。
+- 只需要 4-6 个核心动作：引体向上、俯卧撑、双杠臂屈伸、深蹲、划船。
+- 动作变化是为了**进阶**，不是为了花样：
+  - 变强了就换更难的版本。
+  - 别一次做 15 种变化动作，那不是聪明，只是把瞎练伪装成努力。
+
+---
+
+## 三、组间休息：3-5 分钟
+
+- 休息越久，肌肉和力量增长越多。
+- 真正恢复后再做下一组，才能举得更重，进步更快。
+- 赶着做下一组的人只是累而已，却把这叫做“强度”。
+- 看起来毫不费力，其实是“偷懒式聪明”。
+
+---
+
+## 四、训练量：每块肌肉每周 10-20 组
+
+- 每块肌肉每周 10-20 组是最佳范围，超过收益递减。
+- 如果每周练一块肌肉 2-3 次，每次约 **4-8 组高强度训练组**。
+- 每组 5-15 次，做到接近力竭。
+- 超过这个量，只是更累，不会长得更快。
+- 常见错误：背部一周做 30+ 组（五组引体、五组反手引体、三组划船 × 每周 2-3 次），太多了。
+
+---
+
+## 五、有氧：每天走路，别做 HIIT 把自己耗尽
+
+- HIIT 在减脂上并不比中等强度有氧更有效。
+- HIIT 会飙升压力荷尔蒙，事后更容易饿，高强度会把人耗尽。
+- 走路可以每天走，完全没有心理负担。
+- 配速：能说话，但不能完整聊天。
+- 每天活动量一周下来能让消耗的热量相差数千大卡。
+- 看起来很懒，但确实有效。
+
+---
+
+## 六、睡眠：7-8 小时，没有商量余地
+
+- 肌肉不是在健身房长出来的，是在睡觉时长出来的。
+- 睡得很差 → 身体进入损伤控制模式：肌肉更少、压力更大、疼痛更多。
+- 每周练 6 天但睡得很差的人：效果减半，力竭风险翻倍。
+- 7-8 小时睡眠是最“懒”的增肌方法，效果胜过任何补剂。
+- 别只花一小时优化训练计划，却把睡眠搞得一团糟。
+
+---
+
+## 七、哪种方式更需要自律？
+
+| | 方案 A | 方案 B |
+|---|---|---|
+| 训练频率 | 每周 6 天 | 每周 3 天 |
+| 饮食 | 吃到自己都讨厌 | 简单 |
+| 有氧 | 把自己搞垮 | 每天走路 |
+| 训练量 | 不断加量 | 10-20 组就停 |
+| 结果 | 三个月力竭崩溃 | 坚持很多年，持续进步 |
+| 当下感觉 | 更辛苦 | 看起来懒 |
+| 长期自律 | 低 | 高 |
+
+- 大多数人选 A，因为当下感觉更辛苦。
+- 但从长远看，**忍住不加量、不跟风、无视好胜心、在别人眼里显得懒**，才是真正的自律。
+- 只做真正有效的事。
+
+---
+
+## 总结
+
+- 少练、练对、恢复好、睡够。
+- 肌肉在乎总组数，不在乎你分几天练。
+- 复合动作 + 3-5 分钟组间休息 + 每肌群 10-20 组 + 每天走路 + 7-8 小时睡眠。
+- 做得少不是懒，是清楚该忽略什么。
+- **只做真正有效的事，才是长期自律。**
+
+
+
+
+
+
+
+
+
+
+# 不想玩手机时，可以尝试的 9 件高回报小事
+
+## 核心问题与原理
+
+-   **现象**：放下手机后感到空虚，不自觉地又摸回去。
+-   **本质**：不是意志力差，而是大脑被多巴胺劫持。短视频等高频刺激**调高了大脑的“刺激阈值”**，使其对低刺激的普通活动失去兴趣。
+-   **解法**：不用意志力硬扛，而是给大脑一个**真实的“平替”**——能带来踏实满足感和长期回报的事。
+
+## 九件高回报小事清单
+
+### 1. 🚶‍♀️ 出门散步
+-   **原理**：斯坦福大学研究发现，走路能**提升创造力81%**，激活大脑产生灵感和整合记忆的“默认模式网络”。
+-   **做法**：不带目的出门走15-20分钟，手机开勿扰，边走边随便想。
+
+### 2. ✍️ 写三行日记
+-   **原理**：积极心理学之父塞利格曼的研究证实，记录正向经历和行动意图能**显著提升幸福感和目标执行力**。
+-   **做法**：只需5分钟，写下三行：
+    1.  今天最重要的一件事。
+    2.  我的感受。
+    3.  明天想做什么。
+
+### 3. 🌬️ 做5分钟深慢呼吸
+-   **原理**：哈佛医学院研究表明，它能**激活副交感神经系统**，将你从焦虑的应激模式切换至平静清醒模式。
+-   **做法**：吸气4秒 → 屏息4秒 → 呼气6秒，重复五组。
+
+### 4. 📖 读十页书
+-   **原理**：阅读需要持续注意力，能**重新训练被碎片信息破坏的专注力**。长期坚持阅读的人，在知识积累和思维深度上会与不读书的人产生断层式差距。
+-   **做法**：随手放一本感兴趣的书，想刷手机时就拿起来读十页。
+
+### 5. 🗂️ 整理一个小空间
+-   **原理**：麻省理工学院研究发现，杂乱环境会**持续消耗大脑的认知资源**，造成莫名的疲惫和焦虑。
+-   **做法**：花10分钟，整理一个抽屉或桌面。完成后大脑会获得真实的掌控感和成就感。
+
+### 6. 💡 学一个微技能
+-   **原理**：每次学会新东西，大脑都会经历微量的“突触重塑”，这是智识增长的底层机制。
+-   **做法**：花5-10分钟，学一个单词、一段历史或一个吉他和弦。
+
+### 7. 💌 发一条真诚的消息
+-   **原理**：哈佛大学长达75年的幸福研究核心结论：**良好的人际关系是幸福感最重要的来源**。深度关系靠小温度点滴积累。
+-   **做法**：真诚地想到一个人，发一句真心想说的话，而非群发。
+
+### 8. ✅ 做一件拖延很久的小事
+-   **原理**：心理学中的“蔡格尼克效应”指出，未完成的事会在潜意识里**持续消耗心理能量**。
+-   **做法**：把那件悬而未决的小事（回邮件、预约、还东西）做掉，如释重负。
+
+### 9. 🧘 静坐5分钟
+-   **原理**：麻省理工的神经科学研究发现，大脑在安静休息时会进行深度的记忆整合和信息处理，这是手机给不了的真正恢复。
+-   **做法**：坐下来，闭上眼，允许思绪自然流动，不需要任何技巧，只是安静地待5分钟。
+
+## 总结
+
+这九件事的共同点是，它们提供的满足感是**真实、累积、内化**的，与手机带来的短暂刺激后的空虚截然不同。下次不想又不知做什么时，从这里挑一件就行。你只需要改变今天一次，这一次就是开始。
+`,
 
     async sendSubtitleToDeepSeek(btn) {
       if (btn) {
@@ -2532,7 +3056,7 @@
           throw "字幕内容为空";
 
         const srt = encoder.encodeToSRT(data.body);
-        const title = this.getInfo("h1Title") || document.title;
+        const title = this.getCleanTitle();
         const lanDoc = (this.getSubtitleInfo(lan) || {}).lan_doc || lan;
 
         // ===== 组装发送给 DeepSeek 的完整提示词 =====
@@ -2605,6 +3129,11 @@
         return false;
       }
     },
+
+    // ==================== 悬浮按钮右键菜单 ====================
+    // 【改进点 9】统一的菜单关闭入口：
+    //   原实现只在"点击菜单外部"时移除监听，点菜单项时残留，
+    //   这里确保任何路径关闭菜单都清理掉 document 上的关闭监听。
     showFloatingButtonMenu(x, y) {
       const oldMenu = document.getElementById("cc-subtitle-button-menu");
       oldMenu && oldMenu.remove();
@@ -2617,6 +3146,16 @@
         },
         document.body,
       );
+
+      let closeHandler = null;
+      const closeMenu = () => {
+        if (closeHandler) {
+          document.removeEventListener("mousedown", closeHandler, true);
+          closeHandler = null;
+        }
+        menu.remove();
+      };
+
       const addItem = (label, handler) =>
         elements.createAs(
           "div",
@@ -2631,34 +3170,41 @@
             },
             onclick: function (e) {
               e.stopPropagation();
-              menu.remove();
+              closeMenu();
               handler();
             },
           },
           menu,
         );
+
       addItem("打开字幕下载窗口", () => this.openDownloadDialog());
       addItem("批量下载字幕", () => this.openBatchDialog());
       addItem("复制当前 SRT 字幕", () => this.copyCurrentSubtitleSRT());
+      addItem("复制视频链接", () => this.copyVideoLink());
+      addItem("复制 Markdown 链接", () => this.copyVideoLinkMarkdown());
       addItem("发送字幕到 DeepSeek", () => this.sendSubtitleToDeepSeek());
       addItem("临时关闭悬浮按钮（本页）", () =>
         this.hideFloatingButtonTemporarily(),
       );
       addItem("永久关闭悬浮按钮", () => this.hideFloatingButtonPermanently());
+
       const width = 210;
-      const height = 122 + 36;
+      // 菜单项从 6 个增加到 8 个，高度同步调整
+      const height = 122 + 36 * 2;
       menu.style.left =
         Math.max(8, Math.min(x, window.innerWidth - width - 8)) + "px";
       menu.style.top =
         Math.max(8, Math.min(y, window.innerHeight - height - 8)) + "px";
-      const close = (e) => {
-        if (!menu.contains(e.target)) {
-          menu.remove();
-          document.removeEventListener("mousedown", close, true);
-        }
+
+      closeHandler = (e) => {
+        if (!menu.contains(e.target)) closeMenu();
       };
-      setTimeout(() => document.addEventListener("mousedown", close, true), 0);
+      setTimeout(
+        () => document.addEventListener("mousedown", closeHandler, true),
+        0,
+      );
     },
+
     getBatchItems() {
       const state = this.window.__INITIAL_STATE__ || {};
       const videoData = state.videoData || this.getInfo("videoData") || {};
@@ -2993,37 +3539,94 @@
         link.remove();
       }, 15000);
     },
+
+    // ==================== 批量下载 ====================
+    // 【改进点 8】并发 + 重试：
+    //   - 并发：一次性最多拉取 CONCURRENCY 集，比串行快好几倍；
+    //   - 重试：单集失败自动重试 MAX_RETRY 次，防网络抖动导致整集失败。
     async startBatchDownload(items, language, type, status, startButton) {
       if (startButton.dataset.busy === "1") return;
       startButton.dataset.busy = "1";
       startButton.style.opacity = "0.65";
       startButton.style.pointerEvents = "none";
-      const entries = [];
+
+      const CONCURRENCY = 4;
+      const MAX_RETRY = 2;
+      const RETRY_DELAY = 500;
+
+      const entries = []; // 结果数组（含 index 便于排序还原顺序）
       const failed = [];
-      for (let index = 0; index < items.length; index++) {
-        const item = items[index];
-        status.innerText = `正在获取 ${index + 1}/${items.length}：${item.title}`;
-        try {
-          const result = await this.fetchBatchSubtitle(item, language);
-          const extension = String(type).toLowerCase();
-          entries.push({
-            name: `${String(index + 1).padStart(2, "0")}_${this.safeBatchName(item.title)}.${extension}`,
-            content: this.encodeBatchSubtitle(result.data, type),
-          });
-        } catch (error) {
-          failed.push(`${item.title}：${error}`);
+      let completedCount = 0;
+
+      // 带重试的单集获取
+      const fetchWithRetry = async (item) => {
+        let lastErr;
+        for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
+          try {
+            return await this.fetchBatchSubtitle(item, language);
+          } catch (e) {
+            lastErr = e;
+            if (attempt < MAX_RETRY) {
+              // 重试前稍等，给网络一点恢复时间
+              await new Promise((r) => setTimeout(r, RETRY_DELAY));
+            }
+          }
         }
-      }
+        throw lastErr;
+      };
+
+      // 工作池：cursor 共享递增，天然完成并发调度
+      let cursor = 0;
+      const worker = async () => {
+        while (true) {
+          const index = cursor++;
+          if (index >= items.length) return;
+          const item = items[index];
+          try {
+            const result = await fetchWithRetry(item);
+            const extension = String(type).toLowerCase();
+            entries.push({
+              index,
+              name: `${String(index + 1).padStart(2, "0")}_${this.safeBatchName(item.title)}.${extension}`,
+              content: this.encodeBatchSubtitle(result.data, type),
+            });
+          } catch (error) {
+            failed.push({ index, message: `${item.title}：${error}` });
+          } finally {
+            completedCount++;
+            status.innerText = `已完成 ${completedCount}/${items.length}（成功 ${entries.length}，失败 ${failed.length}）`;
+          }
+        }
+      };
+
+      const workerCount = Math.min(CONCURRENCY, items.length);
+      const workers = [];
+      for (let i = 0; i < workerCount; i++) workers.push(worker());
+      await Promise.all(workers);
+
+      // 按原始顺序排序，保证 ZIP 内顺序和列表一致
+      entries.sort((a, b) => a.index - b.index);
+      failed.sort((a, b) => a.index - b.index);
+
       if (entries.length) {
         const zipName = `Bilibili字幕批量下载_${new Date().toISOString().slice(0, 10)}.zip`;
-        this.downloadBatchBlob(this.createSubtitleZip(entries), zipName);
+        this.downloadBatchBlob(
+          this.createSubtitleZip(
+            entries.map(({ name, content }) => ({ name, content })),
+          ),
+          zipName,
+        );
       }
+
       startButton.dataset.busy = "0";
       startButton.style.opacity = "1";
       startButton.style.pointerEvents = "auto";
+
+      const failedMessages = failed.map((f) => f.message);
       status.innerText = failed.length
-        ? `完成：${entries.length} 集，失败：${failed.length} 集（${failed.slice(0, 2).join("；")}${failed.length > 2 ? "；…" : ""}）`
+        ? `完成：${entries.length} 集，失败：${failed.length} 集（${failedMessages.slice(0, 2).join("；")}${failed.length > 2 ? "；…" : ""}）`
         : `完成：${entries.length} 集，已下载 ZIP 文件`;
+
       if (entries.length)
         encoder.showToast(`✅ 批量字幕已打包：${entries.length} 集`);
       else encoder.showToast("❌ 没有成功获取字幕", "error");
@@ -3266,6 +3869,11 @@
         })
         .catch((e) => this.toast("打开字幕窗口失败", e));
     },
+
+    // ==================== toast ====================
+    // 【改进点 7】没有播放器 toast 容器时回退到 encoder.showToast：
+    //   新版 B 站部分场景没有 .bilibili-player-video-toast-top，
+    //   原实现直接 return，用户就看不到任何反馈。
     toast(msg, error) {
       if (error) console.error(msg, error);
       if (!this.toastDiv) {
@@ -3273,7 +3881,17 @@
         this.toastDiv.className = "bilibili-player-video-toast-item";
       }
       const panel = elements.getAs(".bilibili-player-video-toast-top");
-      if (!panel) return;
+      if (!panel) {
+        if (typeof encoder !== "undefined" && encoder.showToast) {
+          encoder.showToast(
+            msg + (error ? `：${error}` : ""),
+            error ? "error" : "success",
+          );
+        } else {
+          console.warn("[BiliTK]", msg, error);
+        }
+        return;
+      }
       clearTimeout(this.removeTimmer);
       this.toastDiv.innerText = msg + (error ? `:${error}` : "");
       panel.appendChild(this.toastDiv);
@@ -3281,6 +3899,7 @@
         panel.contains(this.toastDiv) && panel.removeChild(this.toastDiv);
       }, 3000);
     },
+
     async updateLocal(data) {
       this.datas.local = data;
       return this.updateSubtitle(data);
@@ -3389,9 +4008,39 @@
         return this.cid;
       }
     },
-    async setupData(force) {
-      if (this.subtitle && this.pcid == this.getEpInfo() && !force)
-        return this.subtitle;
+
+    // ==================== setupData ====================
+    // 【改进点 10】Promise 级缓存：
+    //   连点按钮 / 弹窗和批量同时打开时，原实现会各自发起一次完整请求；
+    //   现在若同一集的请求仍在飞，后续调用直接复用该 Promise。
+    setupData(force) {
+      const currentPcid = this.getEpInfo();
+      // 已有结果，直接返回（等价于原缓存判断）
+      if (this.subtitle && this.pcid == currentPcid && !force) {
+        return Promise.resolve(this.subtitle);
+      }
+      if (
+        !force &&
+        this._setupPromise &&
+        this._setupPromisePcid === currentPcid
+      ) {
+        return this._setupPromise;
+      }
+      const p = this._setupDataImpl(force);
+      this._setupPromise = p;
+      this._setupPromisePcid = currentPcid;
+      p.finally(() => {
+        // 请求结束后清空缓存，下次 force 刷新或换集时能重新拉
+        if (this._setupPromise === p) {
+          this._setupPromise = null;
+          this._setupPromisePcid = null;
+        }
+      });
+      return p;
+    },
+
+    // 【改进点 10】原 setupData 主体，把链式 then 改成 async/await，逻辑等价
+    async _setupDataImpl(force) {
       if (location.pathname == "/blackboard/html5player.html") {
         let match = location.search.match(/cid=(\d+)/i);
         if (!match) return;
@@ -3413,81 +4062,91 @@
       };
       if (!force) this.datas = { close: { body: [] }, local: { body: [] } };
       decoder.data = undefined;
-      return fetch(
-        `https://api.bilibili.com/x/player${this.cid ? "/wbi" : ""}/v2?${this.cid ? `cid=${this.cid}` : `&ep_id=${this.epid}`}${this.aid ? `&aid=${this.aid}` : `&bvid=${this.bvid}`}`,
+
+      const res = await fetch(
+        `https://api.bilibili.com/x/player${this.cid ? "/wbi" : ""}/v2?${
+          this.cid ? `cid=${this.cid}` : `&ep_id=${this.epid}`
+        }${this.aid ? `&aid=${this.aid}` : `&bvid=${this.bvid}`}`,
         { credentials: "include" },
-      ).then((res) => {
-        if (res.status == 200) {
-          return res.json().then((ret) => {
-            if (ret.code == -404) {
-              return fetch(
-                `//api.bilibili.com/x/v2/dm/view?${this.aid ? `aid=${this.aid}` : `bvid=${this.bvid}`}&oid=${this.cid}&type=1`,
-                { credentials: "include" },
-              )
-                .then((res) => {
-                  return res.json();
-                })
-                .then((ret) => {
-                  if (ret.code != 0)
-                    throw "无法读取本视频APP字幕配置" + ret.message;
-                  this.subtitle = (ret.data && ret.data.subtitle) || {
-                    subtitles: [],
-                  };
-                  this.subtitle.count = this.subtitle.subtitles.length;
-                  this.subtitle.subtitles.forEach(
-                    (item) =>
-                      (item.subtitle_url = item.subtitle_url.replace(
-                        /https?:\/\//,
-                        "//",
-                      )),
-                  );
-                  this.subtitle.subtitles.push(
-                    { lan: "close", lan_doc: "关闭" },
-                    { lan: "local", lan_doc: "本地字幕" },
-                  );
-                  this.subtitle.allow_submit = false;
-                  return this.subtitle;
-                });
-            }
-            if (ret.code != 0 || !ret.data || !ret.data.subtitle)
-              throw "读取视频字幕配置错误:" + ret.code + ret.message;
-            this.subtitle = ret.data.subtitle;
-            this.subtitle.count = this.subtitle.subtitles.length;
-            this.subtitle.subtitles.push(
-              { lan: "close", lan_doc: "关闭" },
-              { lan: "local", lan_doc: "本地字幕" },
-            );
-            return this.subtitle;
-          });
-        } else {
-          throw "请求字幕配置失败:" + res.statusText;
-        }
-      });
+      );
+      if (res.status != 200) throw "请求字幕配置失败:" + res.statusText;
+      const ret = await res.json();
+
+      // 部分 APP 端字幕需要走 dm/view 接口
+      if (ret.code == -404) {
+        const res2 = await fetch(
+          `//api.bilibili.com/x/v2/dm/view?${
+            this.aid ? `aid=${this.aid}` : `bvid=${this.bvid}`
+          }&oid=${this.cid}&type=1`,
+          { credentials: "include" },
+        );
+        const ret2 = await res2.json();
+        if (ret2.code != 0) throw "无法读取本视频APP字幕配置" + ret2.message;
+        this.subtitle = (ret2.data && ret2.data.subtitle) || {
+          subtitles: [],
+        };
+        this.subtitle.count = this.subtitle.subtitles.length;
+        this.subtitle.subtitles.forEach(
+          (item) =>
+            (item.subtitle_url = item.subtitle_url.replace(
+              /https?:\/\//,
+              "//",
+            )),
+        );
+        this.subtitle.subtitles.push(
+          { lan: "close", lan_doc: "关闭" },
+          { lan: "local", lan_doc: "本地字幕" },
+        );
+        this.subtitle.allow_submit = false;
+        return this.subtitle;
+      }
+
+      if (ret.code != 0 || !ret.data || !ret.data.subtitle)
+        throw "读取视频字幕配置错误:" + ret.code + ret.message;
+      this.subtitle = ret.data.subtitle;
+      this.subtitle.count = this.subtitle.subtitles.length;
+      this.subtitle.subtitles.push(
+        { lan: "close", lan_doc: "关闭" },
+        { lan: "local", lan_doc: "本地字幕" },
+      );
+      return this.subtitle;
     },
+
+    // ==================== tryInit ====================
+    // 【改进点 5】防抖：
+    //   MutationObserver 会因 B 站页面 DOM 频繁变动而疯狂调用 tryInit，
+    //   每次都触发一次 setupData → 一次 XHR，很容易被风控或造成浪费。
+    //   这里统一延迟 300ms 触发，短时间内多次调用只跑最后一次。
     tryInit() {
-      this.setupData()
-        .then((subtitle) => {
-          if (!subtitle) return;
-          if (elements.getAs("#bilibili-player-subtitle-btn")) {
-            console.log("CC助手已初始化");
-          } else if (elements.getAs(".bilibili-player-video-btn-color")) {
-            oldPlayerHelper.init(subtitle);
-          } else if (elements.getAs(".bilibili-player-video-danmaku-setting")) {
-            player2x.init(subtitle);
-          } else if (
-            elements.getAs(".bpx-player-ctrl-subtitle-major-content")
-          ) {
-            player315.init(subtitle);
-          } else if (elements.getAs(".squirtle-subtitle-wrap")) {
-            player314.init(subtitle);
-          } else {
-            console.log("bilibili cc未发现可识别版本播放器");
-          }
-        })
-        .catch((e) => {
-          this.toast("CC字幕助手配置失败", e);
-        });
+      clearTimeout(this._initDebounce);
+      this._initDebounce = setTimeout(() => {
+        this.setupData()
+          .then((subtitle) => {
+            if (!subtitle) return;
+            if (elements.getAs("#bilibili-player-subtitle-btn")) {
+              console.log("CC助手已初始化");
+            } else if (elements.getAs(".bilibili-player-video-btn-color")) {
+              oldPlayerHelper.init(subtitle);
+            } else if (
+              elements.getAs(".bilibili-player-video-danmaku-setting")
+            ) {
+              player2x.init(subtitle);
+            } else if (
+              elements.getAs(".bpx-player-ctrl-subtitle-major-content")
+            ) {
+              player315.init(subtitle);
+            } else if (elements.getAs(".squirtle-subtitle-wrap")) {
+              player314.init(subtitle);
+            } else {
+              console.log("bilibili cc未发现可识别版本播放器");
+            }
+          })
+          .catch((e) => {
+            this.toast("CC字幕助手配置失败", e);
+          });
+      }, 300);
     },
+
     init() {
       this.registerMenuCommands();
       this.createFloatingButton();

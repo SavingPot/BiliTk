@@ -1,7 +1,8 @@
 # BiliTk——Bilibili Toolkit
-一个基于油猴脚本的B站助手，主要是字幕下载与 AI 总结（目前仅限于 DeepSeek）。<br>
+一个基于油猴脚本的B站助手，主要是字幕下载、基于字幕的视频 AI 总结（目前 AI 仅限于 DeepSeek）、视频精简链接复制、视频链接的 Markdown 格式复制。<br>
+字幕下载功能适用于绝大多数的 B 站页面，无论是普通页面，收藏列表播放页面还是稍后再看页面都可以，只需要视频有字幕即可<br>
 脚本是基于 GPL3.0 协议的自由软件，如果程序有问题，欢迎提出 Issue，或是 Fork 后发起 Pull Request 合并仓库。<br>
-本脚本由[SavingPot](https://space.bilibili.com/515982690)开发。
+本脚本由 [SavingPot](https://space.bilibili.com/515982690) 开发。
 
 <br>
 <br>
@@ -9,16 +10,17 @@
 # 使用方法
 ## 方法一. 手动安装（目前只支持手动安装）
 1. 安装用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)。
-2. 打开管理器，选择“新建脚本”。
-3. 删除编辑器中的默认内容，将 [Bilibili-CC-Subtitle-Tool.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js) 全部复制进去。
-4. 保存脚本并启用。
+2. 浏览器可能会默认限制用户脚本管理器的功能，所以要现在拓展管理中，打开用户脚本管理器的设置界面，点击允许运行用户脚本
+3. 打开管理器，选择“新建脚本”。
+4. 删除编辑器中的默认内容，将 [Bilibili-CC-Subtitle-Tool.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js) 里的文本全部复制进去。
+5. 保存脚本并启用。
 
 <br>
 <br>
 
 # 工作原理
-脚本通过 B 站官方暴露的接口来下载字幕，过程中内置限流：每批下载 N 份后休息若干秒，防止被风控封。<br>
-而发送到 DeepSeek 功能则是把 Skill 和字幕内容一起发送给 DeepSeek 网页端，原理是模拟用户的点击、粘贴、回车等等，因此风险相对较低。
+1. 脚本下载字幕的过程中内置限流、抖动等安全功能。<br>
+2. 发送到 DeepSeek 功能是把 Skill 和字幕内容一起发送给 DeepSeek 网页端，原理是模拟用户的点击、粘贴、回车等等，因此风险相对较低。
 
 <br>
 <br>
