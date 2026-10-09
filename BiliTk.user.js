@@ -2605,13 +2605,66 @@
       this.applyFloatingButtonVisibility();
     },
 
+    // 【改进】检测"网页全屏"或"浏览器全屏"是否处于激活状态。
+    // 注意：B 站的"网页全屏"不是浏览器原生 requestFullscreen，
+    // 不会触发 fullscreenchange 事件，只能靠检测 DOM 上的标志：
+    //   · 现代 bpx 播放器：.bpx-player-container[data-screen="web"|"full"]
+    //   · 老版播放器：   .bilibili-player.bilibili-player-fullscreen
+    //   · 部分版本会给 body/html 加类
+    //   · 真正的浏览器全屏：document.fullscreenElement 非空
+    isWebFullscreen() {
+      // ① 浏览器原生全屏
+      if (document.fullscreenElement) return true;
+
+      // ② 现代 bpx 播放器：data-screen 属性
+      const bpx = document.querySelector(".bpx-player-container");
+      if (bpx) {
+        const screen = bpx.getAttribute("data-screen");
+        if (screen === "web" || screen === "full") return true;
+      }
+
+      // ③ 老版播放器 / 部分旧场景：class 标志
+      if (
+        document.querySelector(
+          ".bilibili-player.bilibili-player-fullscreen, " +
+            ".bilibili-player-video-web-fullscreen",
+        )
+      )
+        return true;
+
+      // ④ body / html 上的全屏类（不同时期命名不一样，都兜一遍）
+      const cls = document.body?.classList;
+      const htmlCls = document.documentElement?.classList;
+      if (cls) {
+        if (
+          cls.contains("player-fullscreen") ||
+          cls.contains("bpx-player-fullscreen") ||
+          cls.contains("bilibili-player-fullscreen")
+        )
+          return true;
+      }
+      if (htmlCls) {
+        if (
+          htmlCls.contains("player-fullscreen") ||
+          htmlCls.contains("bpx-player-fullscreen")
+        )
+          return true;
+      }
+
+      return false;
+    },
+
     applyFloatingButtonVisibility() {
       if (!this.floatButtonContainer) return;
       const state = uiManager.loadState(this.floatButtonPrefKey, {
         hidden: false,
       });
-      this.floatButtonContainer.style.display =
-        this.floatButtonHiddenThisPage || state.hidden ? "none" : "flex";
+      // 【改进】网页全屏 / 浏览器全屏时也隐藏，避免遮挡视频
+      const hidden =
+        this.floatButtonHiddenThisPage ||
+        state.hidden ||
+        this.isWebFullscreen();
+      this.floatButtonContainer.style.display = hidden ? "none" : "flex";
     },
     toggleFloatingButtonGlobal() {
       const state = uiManager.loadState(this.floatButtonPrefKey, {
@@ -4322,6 +4375,39 @@
       this.registerMenuCommands();
       this.createFloatingButton();
       this.tryInit();
+
+      // 【改进】网页全屏切换时同步悬浮按钮的可见性。
+      //   · 浏览器真全屏：监听标准的 fullscreenchange 事件
+      //   · B 站网页全屏：不触发 fullscreenchange，只能靠 MutationObserver
+      //     监听 class / data-screen 属性变化
+      //   用 rAF 做一次微防抖，避免 DOM 频繁变动时反复调用。
+      let pendingSync = false;
+      const syncFloatVisibility = () => {
+        if (pendingSync) return;
+        pendingSync = true;
+        requestAnimationFrame(() => {
+          pendingSync = false;
+          this.applyFloatingButtonVisibility();
+        });
+      };
+
+      document.addEventListener("fullscreenchange", syncFloatVisibility);
+      document.addEventListener("webkitfullscreenchange", syncFloatVisibility);
+
+      // 只监听 class 和 data-screen 两种属性，尽量减少触发频率
+      const attrFilter = {
+        attributes: true,
+        attributeFilter: ["class", "data-screen"],
+      };
+      new MutationObserver(syncFloatVisibility).observe(document.body, {
+        ...attrFilter,
+        subtree: true,
+      });
+      new MutationObserver(syncFloatVisibility).observe(
+        document.documentElement,
+        attrFilter,
+      );
+
       new MutationObserver((mutations, observer) => {
         for (const mutation of mutations) {
           if (!mutation.target) return;
@@ -4332,6 +4418,7 @@
             mutation.target.classList.contains(
               "bpx-player-ctrl-subtitle-bilingual",
             ) ||
+            mutation.target.classList.contains("squircle-quality-wrap") ||
             mutation.target.classList.contains("squirtle-quality-wrap")
           ) {
             this.tryInit();
