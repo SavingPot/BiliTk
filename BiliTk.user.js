@@ -2319,6 +2319,15 @@
     floatButton: null,
     floatButtonHiddenThisPage: false,
     floatButtonPrefKey: "bilibili_cc_float_button_hidden_v1",
+    // 【需求 1】DeepSeek 官方小鲸鱼图标
+    // 路径直接取自 https://fe-static.deepseek.com/chat/favicon.svg
+    // viewBox 是 0 0 24 24，fill="currentColor" 会自动继承按钮的 color:#fff，
+    // 在蓝色渐变背景上呈现为一只白色鲸鱼，和 DeepSeek 官网 logo 一致。
+    DEEPSEEK_WHALE_SVG:
+      '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" ' +
+      'fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"></path>' +
+      "</svg>",
     registerMenuCommands() {
       if (
         this.menuCommandsRegistered ||
@@ -2486,6 +2495,7 @@
       );
 
       // 【需求 3】复制 Markdown 链接
+      // 图标 = 链条链接图标（主） + 右下角 MD 徽标（辅）
       this.copyMdLinkButton = elements.createAs(
         "div",
         {
@@ -2494,12 +2504,22 @@
             "width:44px;height:44px;background:linear-gradient(135deg,#9c27b0,#b968c7);" +
             "border-radius:12px;box-shadow:0 4px 14px rgba(156,39,176,0.35);cursor:pointer;" +
             "display:flex;align-items:center;justify-content:center;color:#fff;" +
+            "position:relative;" +
             "user-select:none;-webkit-tap-highlight-color:transparent;" +
             "transition:transform .15s, box-shadow .15s;",
           innerHTML:
-            '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">' +
-            '<path d="M3 5h2.5l2.5 4 2.5-4H13v14h-2.5v-9.5L8 13 5.5 9.5V19H3V5zm12 0h2.5v9h2.5l-3.75 5L12.5 14h2.5V5z"/>' +
-            "</svg>",
+            // 主图标：链条（link）——两段环扣，一眼看出"复制链接"
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" ' +
+            'stroke="currentColor" stroke-width="2.2" stroke-linecap="round" ' +
+            'stroke-linejoin="round" aria-hidden="true">' +
+            '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+            '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' +
+            "</svg>" +
+            // 右下角徽标：白底紫字 "MD"，与按钮背景形成对比
+            '<span style="position:absolute;bottom:2px;right:2px;' +
+            "font-size:8px;font-weight:700;line-height:11px;letter-spacing:-0.2px;" +
+            "background:#fff;color:#9c27b0;padding:0 3px;border-radius:5px;" +
+            'box-shadow:0 1px 3px rgba(0,0,0,0.25);">MD</span>',
           title: "复制为 Markdown 链接：[标题](链接)",
           onmouseenter: function () {
             this.style.transform = "scale(1.1)";
@@ -2528,7 +2548,7 @@
             "font-weight:700;font-size:15px;letter-spacing:.5px;font-family:Arial,sans-serif;" +
             "user-select:none;-webkit-tap-highlight-color:transparent;" +
             "transition:transform .15s, box-shadow .15s;",
-          innerText: "DS",
+          innerHTML: this.DEEPSEEK_WHALE_SVG,
           title: "把当前视频的字幕发送给 DeepSeek，自动整理成 Obsidian 笔记",
           onmouseenter: function () {
             this.style.transform = "scale(1.1)";
@@ -2540,6 +2560,43 @@
           },
           onclick: function () {
             self.sendSubtitleToDeepSeek(this);
+          },
+        },
+        this.floatButtonContainer,
+      );
+
+      // 【需求 2】发送字幕到 DeepSeek（带时间戳版）
+      // 与上面那个按钮功能相同，但会：
+      //   ① 把字幕转成 "[MM:SS] 内容" 的带时间戳格式
+      //   ② 在提示词里追加一条要求，让 DeepSeek 在笔记里也标注时间戳
+      // 视觉上用更深的蓝 + 右下角一个黄色 T 徽标，与"不标时间戳"版本区分。
+      this.deepseekTimestampButton = elements.createAs(
+        "div",
+        {
+          id: "cc-subtitle-deepseek-ts-trigger",
+          style:
+            "width:44px;height:44px;background:linear-gradient(135deg,#2b3cc9,#4d6bfe);" +
+            "border-radius:12px;box-shadow:0 4px 14px rgba(43,60,201,0.4);cursor:pointer;" +
+            "display:flex;align-items:center;justify-content:center;color:#fff;" +
+            "position:relative;" +
+            "user-select:none;-webkit-tap-highlight-color:transparent;" +
+            "transition:transform .15s, box-shadow .15s;",
+          innerHTML:
+            this.DEEPSEEK_WHALE_SVG +
+            '<span style="position:absolute;bottom:2px;right:3px;' +
+            "font-size:9px;font-weight:700;background:#ffd54f;color:#1e2f9c;" +
+            'padding:0 3px;border-radius:6px;line-height:12px;">T</span>',
+          title: "把字幕发送给 DeepSeek，并在笔记中标注时间戳，方便回看视频",
+          onmouseenter: function () {
+            this.style.transform = "scale(1.1)";
+            this.style.boxShadow = "0 6px 20px rgba(43,60,201,0.6)";
+          },
+          onmouseleave: function () {
+            this.style.transform = "scale(1)";
+            this.style.boxShadow = "0 4px 14px rgba(43,60,201,0.4)";
+          },
+          onclick: function () {
+            self.sendSubtitleToDeepSeekWithTimestamps(this);
           },
         },
         this.floatButtonContainer,
@@ -2755,7 +2812,7 @@
 以下是范例：
 # AI 与自媒体：人机协作的实践与思考
 
-> 视频来源：B站 UP主“阿泰”（知识区）  
+> 视频来源：B站 UP主“阿泰”（知识区）
 > 主题：AI 时代做视频还需要人吗？如何与 AI 相处？以及字节“吹work AI知识库”实战体验
 
 ---
@@ -2814,7 +2871,7 @@
   1. 将选题拆成 3-5 个核心问题。
   2. 整理数据、案例和观点，标注信息来源与可信度。
   3. 站在反方给逻辑和证据挑漏洞。
-- **成果**：生成研究底稿，含思维导图、数据表，指出关键盲区，重新定义选题。  
+- **成果**：生成研究底稿，含思维导图、数据表，指出关键盲区，重新定义选题。
   案例：选题“网吧为什么又活过来了” → 快速生成底稿，判断是否值得做。
 
 ### 3. 代码审查 skill
@@ -3028,6 +3085,28 @@
 这九件事的共同点是，它们提供的满足感是**真实、累积、内化**的，与手机带来的短暂刺激后的空虚截然不同。下次不想又不知做什么时，从这里挑一件就行。你只需要改变今天一次，这一次就是开始。
 `,
 
+    // 【需求 2】在原有提示词之后追加的"时间戳要求"片段。
+    // 只在"带时间戳"版本里拼接到 OBSIDIAN_SKILL_PROMPT 之后。
+    OBSIDIAN_TIMESTAMP_EXTRA: `
+
+【时间戳要求（本次任务特别重要，请严格遵守）】
+本次提供的字幕每一条前面都带有 [MM:SS] 或 [HH:MM:SS] 格式的时间戳，
+表示该句字幕在视频中的播放时间。
+请在整理笔记时，为每个要点、每个段落或每个小节末尾，用加粗方括号
+标注其对应的时间戳，例如：
+
+- 关键结论…… **[00:32]**
+- 演示步骤二…… **[03:15]**
+- 章节总结…… **[12:08]**
+
+规则：
+1. 时间戳必须来自字幕中已给出的内容，不要编造。
+2. 若某段内容跨越多个时间点，标注该段起始位置的时间戳。
+3. 小于一小时用 [MM:SS]，超过一小时用 [HH:MM:SS]，与字幕格式保持一致。
+4. 时间戳用加粗方括号 **[...]** 表示，让它在一大段文字里比较显眼。
+5. 用户会依赖这些时间戳直接跳转到视频对应位置来进一步了解，所以
+   时间戳的准确性和可读性都很重要。`,
+
     async sendSubtitleToDeepSeek(btn) {
       if (btn) {
         btn.style.pointerEvents = "none";
@@ -3097,6 +3176,96 @@
           btn.style.opacity = "";
         }
       }
+    },
+
+    // 【需求 2】与 sendSubtitleToDeepSeek 相同的流程，但：
+    //   ① 字幕转成 "[MM:SS] 内容" 形式，让 DeepSeek 能读到时间信息
+    //   ② 在 prompt 里追加 OBSIDIAN_TIMESTAMP_EXTRA，要求笔记里也带时间戳
+    async sendSubtitleToDeepSeekWithTimestamps(btn) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+      try {
+        encoder.showToast("正在获取字幕…");
+
+        const subtitle = await this.setupData();
+        if (!subtitle) throw "当前页面还没有读取到视频信息";
+
+        const languages = (subtitle.subtitles || []).filter(
+          (item) => item.lan !== "close" && item.lan !== "local",
+        );
+        if (!languages.length) throw "当前视频没有可用的在线字幕";
+
+        const lan =
+          encoder.currentLan &&
+          languages.some((item) => item.lan === encoder.currentLan)
+            ? encoder.currentLan
+            : languages[0].lan;
+
+        const data = await this.getSubtitle(lan);
+        if (!data || !Array.isArray(data.body) || !data.body.length)
+          throw "字幕内容为空";
+
+        // 用带时间戳的纯文本替代 SRT，更简洁、也更容易被模型利用
+        const timestamped = this.formatSubtitleWithTimestamps(data.body);
+        const title = this.getCleanTitle();
+        const lanDoc = (this.getSubtitleInfo(lan) || {}).lan_doc || lan;
+
+        const prompt =
+          this.OBSIDIAN_SKILL_PROMPT +
+          this.OBSIDIAN_TIMESTAMP_EXTRA +
+          `\n\n===== 以下是要处理的视频字幕（每条均带时间戳）=====\n` +
+          `视频标题：${title}\n` +
+          `字幕语言：${lanDoc}\n` +
+          `字幕条数：${data.body.length}\n\n` +
+          timestamped;
+
+        let stored = false;
+        try {
+          if (typeof GM_setValue === "function") {
+            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
+            stored = true;
+          }
+        } catch (e) {
+          console.error("[BiliTK→DS] 写入 GM 存储失败", e);
+        }
+
+        await this.copyTextToClipboard(prompt);
+        window.open("https://chat.deepseek.com/", "_blank");
+
+        encoder.showToast(
+          stored
+            ? "✅ 已打开 DeepSeek，正在自动发送带时间戳的字幕…"
+            : "✅ 已复制字幕并打开 DeepSeek，请粘贴发送",
+        );
+      } catch (e) {
+        console.error("发送带时间戳字幕到 DeepSeek 失败", e);
+        encoder.showToast(`❌ 发送失败：${e}`, "error");
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
+    // 【需求 2】把 BCC 字幕的 body 转成 "[MM:SS] 内容" 的逐行纯文本。
+    // 超过一小时用 HH:MM:SS，不超过则用 MM:SS，和展示习惯一致。
+    formatSubtitleWithTimestamps(body) {
+      const pad = (n) => String(n).padStart(2, "0");
+      return body
+        .map(({ from, content }) => {
+          const total = Math.max(0, Math.floor(Number(from) || 0));
+          const h = Math.floor(total / 3600);
+          const m = Math.floor((total % 3600) / 60);
+          const s = total % 60;
+          const time =
+            h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+          // 换行符替换成空格，保证"一行一条"，模型更容易对齐时间
+          return `[${time}] ${String(content || "").replace(/\n/g, " ")}`;
+        })
+        .join("\n");
     },
 
     async copyTextToClipboard(text) {
@@ -3182,14 +3351,17 @@
       addItem("复制视频链接", () => this.copyVideoLink());
       addItem("复制 Markdown 链接", () => this.copyVideoLinkMarkdown());
       addItem("发送字幕到 DeepSeek", () => this.sendSubtitleToDeepSeek());
+      addItem("发送字幕到 DeepSeek（带时间戳）", () =>
+        this.sendSubtitleToDeepSeekWithTimestamps(),
+      );
       addItem("临时关闭悬浮按钮（本页）", () =>
         this.hideFloatingButtonTemporarily(),
       );
       addItem("永久关闭悬浮按钮", () => this.hideFloatingButtonPermanently());
 
       const width = 210;
-      // 菜单项从 6 个增加到 8 个，高度同步调整
-      const height = 122 + 36 * 2;
+      // 菜单项增加到 9 个，高度同步调整
+      const height = 122 + 36 * 3;
       menu.style.left =
         Math.max(8, Math.min(x, window.innerWidth - width - 8)) + "px";
       menu.style.top =
