@@ -3,7 +3,7 @@
 // @namespace    https://github.com/SavingPot/BiliTk
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      1.3
+// @version      1.4
 // @description  详细介绍见 https://github.com/SavingPot/BiliTk
 // @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
@@ -2839,17 +2839,19 @@
     // ==================== Obsidian 笔记 SKILL ====================
     OBSIDIAN_SKILL_PROMPT: `你是一个帮助用户整理视频内容的助手。用户会给你一段视频字幕，你需要根据字幕总结视频内容，写成能直接粘贴进 Obsidian 笔记的 Markdown 正文。
 
-【硬性要求，必须严格遵守】
+【硬性要求，必须使用在线搜索严格遵守】
 1. 字幕预处理：
   1. 语音识别问题：由于字幕通常是 AI 识别的，所以可能会有一些问题，例如脑雾被识别成脑物，Trae Work 变成吹work，WorkBuddy 变成 work body。如果你可以肯定字幕一定是写错了，就先更改后再整理。
   2. 翻译问题：部分字幕是翻译自外文的，所以可能有问题，比如 Doom 被翻译成厄运之类的，或者是语句很奇怪，你可以在确保不会产生歧义且不会影响原意的前提下重构句子，让句子变正常。
+  3. 必要时，可以索资料，比如Lock sand实际是LocalSend
+  4. 注意要整理好英文的格式，比如 local send 应为 LocalSend，rust desk应为 RustDesk
 2. 不要编造字幕里没有的信息；字幕里没提的结论、数据、案例一概不要脑补。
 3. 如果字幕里出现专有名词、人名、产品名、命令、代码等，请保持原文写法。
 4. 不要向用户提问，不要征询用户意见，只输出成品。
 5. 直接输出笔记正文，不要有任何开场白、说明或收尾语，例如"以下是我给你整理的笔记""希望对你有帮助"之类的话一律不要出现。
-6. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
-7. 用中文输出；标题、要点、列表、表格、代码块、Emoji等可以按需使用，以此让层次清晰、笔记易读。
-
+6. 可读性很重要，标题、要点、列表、表格、代码块、Emoji等可以按需使用，以此让层次清晰、笔记易读。
+7. 用中文输出；
+8. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
 
 【建议的笔记结构（可灵活裁剪，视内容而定）】
 # 概要
