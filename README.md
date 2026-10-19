@@ -57,8 +57,12 @@ wget -qO- https://astral.sh/uv/install.sh | sh
 
 ### ②配置 bili-tk-asr
 
-
-先找到一个地方用来放置 asr 脚本，在那里打开终端
+下载 bili-tk-asr 的 Release 并放在一个你希望的目录，然后在里面执行
+```bash
+chmod +x install.sh
+./install.sh
+```
+或手动版
 ```bash
 # 1. 克隆库
 git clone https://github.com/SavingPot/bili-tk-asr.git
