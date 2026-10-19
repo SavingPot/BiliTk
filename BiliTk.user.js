@@ -3,7 +3,7 @@
 // @namespace    https://github.com/SavingPot/BiliTk
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      1.5.2
+// @version      1.5.3
 // @description  详细介绍见 https://github.com/SavingPot/BiliTk
 // @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
@@ -23,6 +23,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @grant        GM_openInTab
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -48,8 +49,8 @@
     }
     if (!pending || !pending.text) return;
 
-    // 超过 5 分钟的旧消息忽略，避免重复发送
-    if (pending.ts && Date.now() - pending.ts > 5 * 60 * 1000) {
+    // 超过 50 分钟的旧消息忽略，避免重复发送
+    if (pending.ts && Date.now() - pending.ts > 50 * 60 * 1000) {
       try {
         GM_deleteValue(DS_STORAGE_KEY);
       } catch (e) {}
@@ -236,35 +237,13 @@
 #subtitle-setting-panel>div>* {margin-right: 5px;}
 #bilibili-player-subtitle-btn:hover>#subtitle-setting-panel {display: block!important;}
 /*滑动选择样式*/
-#subtitle-setting-panel input[type="range"] {
-  background-color: #ebeff4;
-  -webkit-appearance: none;
-  height:4px;
-  transform: translateY(-4px);
-}
-#subtitle-setting-panel input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  height: 15px;
-  width: 15px;
-  background: #fff;
-  border-radius: 15px;
-  border: 1px solid;
-}
+#subtitle-setting-panel input[type="range"] { background-color: #ebeff4; -webkit-appearance: none; height:4px; transform: translateY(-4px); }
+#subtitle-setting-panel input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; height: 15px; width: 15px; background: #fff; border-radius: 15px; border: 1px solid; }
 /*复选框和其对应标签样式*/
 #subtitle-setting-panel input[type="checkbox"]{display:none;}
 #subtitle-setting-panel input ~ label {cursor:pointer;}
 #subtitle-setting-panel input:checked ~ label:before {content: '\\2714';}
-#subtitle-setting-panel input ~ label:before{
-  width: 12px;
-  height:12px;
-  line-height: 14px;
-  vertical-align: text-bottom;
-  border-radius: 3px;
-  border:1px solid #d3d3d3;
-  display: inline-block;
-  text-align: center;
-  content: ' ';
-}
+#subtitle-setting-panel input ~ label:before{ width: 12px; height:12px; line-height: 14px; vertical-align: text-bottom; border-radius: 3px; border:1px solid #d3d3d3; display: inline-block; text-align: center; content: ' '; }
 /*悬停显示下拉框样式*/
 #subtitle-setting-panel .bpui-selectmenu:hover .bpui-selectmenu-list{display:block;}
 /*滚动条样式*/
@@ -272,82 +251,18 @@
 #subtitle-setting-panel ::-webkit-scrollbar-track{border-radius: 4px;background-color: #EEE;}
 #subtitle-setting-panel ::-webkit-scrollbar-thumb{border-radius: 4px;background-color: #999;}
 /* 新增：拖动时的样式 */
-#subtitle-download-dialog.dragging {
-    cursor: grabbing !important;
-    user-select: none;
-}
-#subtitle-download-dialog.dragging textarea {
-    pointer-events: none;
-}
+#subtitle-download-dialog.dragging { cursor: grabbing !important; user-select: none; }
+#subtitle-download-dialog.dragging textarea { pointer-events: none; }
 /* 新增：复制按钮样式 */
-.copy-clipboard-btn {
-    background: #00a1d6 !important;
-    margin-left: 5px;
-}
-.copy-clipboard-btn:hover {
-    background: #00a1d6 !important;
-}
-.copy-success-toast {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.8);
-    color: #fff;
-    padding: 20px 40px;
-    border-radius: 8px;
-    font-size: 16px;
-    z-index: 1048577;
-    animation: fadeInOut 2s ease;
-}
-@keyframes fadeInOut {
-    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
-    20% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
-}
+.copy-clipboard-btn { background: #00a1d6 !important; margin-left: 5px; }
+.copy-clipboard-btn:hover { background: #00a1d6 !important; }
+.copy-success-toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: #fff; padding: 20px 40px; border-radius: 8px; font-size: 16px; z-index: 1048577; animation: fadeInOut 2s ease; }
+@keyframes fadeInOut { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); } 20% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 80% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); } }
 /* 字幕框右下角的明显缩放手柄 */
-.subtitle-textarea-resize-box {
-    position: relative;
-    width: 500px;
-    min-width: 310px;
-    height: 410px;
-    min-height: 180px;
-    max-width: calc(100vw - 40px);
-    max-height: calc(100vh - 170px);
-}
-.subtitle-textarea-resize-box textarea {
-    width: 100% !important;
-    height: 100% !important;
-    box-sizing: border-box;
-    resize: none !important;
-}
-.subtitle-resize-handle {
-    position: absolute;
-    right: 3px;
-    bottom: 3px;
-    width: 28px;
-    height: 28px;
-    border: 2px solid #fff;
-    border-radius: 5px;
-    background: #00a1d6;
-    box-shadow: 0 1px 5px rgba(0,0,0,.35);
-    color: #fff;
-    cursor: nwse-resize;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    font-weight: bold;
-    line-height: 1;
-    z-index: 2;
-    user-select: none;
-}
-.subtitle-resize-handle:hover,
-.subtitle-resize-handle.active {
-    background: #008fbe;
-    transform: scale(1.08);
-}
+.subtitle-textarea-resize-box { position: relative; width: 500px; min-width: 310px; height: 410px; min-height: 180px; max-width: calc(100vw - 40px); max-height: calc(100vh - 170px); }
+.subtitle-textarea-resize-box textarea { width: 100% !important; height: 100% !important; box-sizing: border-box; resize: none !important; }
+.subtitle-resize-handle { position: absolute; right: 3px; bottom: 3px; width: 28px; height: 28px; border: 2px solid #fff; border-radius: 5px; background: #00a1d6; box-shadow: 0 1px 5px rgba(0,0,0,.35); color: #fff; cursor: nwse-resize; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; line-height: 1; z-index: 2; user-select: none; }
+.subtitle-resize-handle:hover, .subtitle-resize-handle.active { background: #008fbe; transform: scale(1.08); }
 </style>`,
     oldEnableIcon: `
 <svg width="22" height="28" viewbox="0 0 22 30" xmlns="http://www.w3.org/2000/svg">
@@ -421,9 +336,7 @@
         ),
         arraw = this.createAs(
           "div",
-          {
-            className: "bpui-selectmenu-arrow bpui-icon bpui-icon-arrow-down",
-          },
+          { className: "bpui-selectmenu-arrow bpui-icon bpui-icon-arrow-down" },
           selector,
         ),
         list = this.createAs(
@@ -442,10 +355,7 @@
       config.datas.forEach((item) => {
         this.createAs(
           "li",
-          {
-            className: "bpui-selectmenu-list-row",
-            innerHTML: item.content,
-          },
+          { className: "bpui-selectmenu-list-row", innerHTML: item.content },
           list,
         ).dataset.value = item.value;
       });
@@ -472,7 +382,6 @@
     },
   };
 
-  // ==================== 公共UI工具：拖拽与状态管理 ====================
   const uiManager = {
     dragMap: new WeakMap(),
     makeDraggable(handle, container, options = {}) {
@@ -494,10 +403,10 @@
       };
       const onMouseMove = (e) => {
         if (!state.isDragging) return;
-        let x = e.clientX - state.offsetX;
-        let y = e.clientY - state.offsetY;
-        const maxX = window.innerWidth - container.offsetWidth;
-        const maxY = window.innerHeight - container.offsetHeight;
+        let x = e.clientX - state.offsetX,
+          y = e.clientY - state.offsetY;
+        const maxX = window.innerWidth - container.offsetWidth,
+          maxY = window.innerHeight - container.offsetHeight;
         x = Math.max(0, Math.min(x, maxX));
         y = Math.max(0, Math.min(y, maxY));
         container.style.left = x + "px";
@@ -569,7 +478,6 @@
     });
   }
 
-  //编码器，用于将B站BCC字幕编码为常见字幕格式下载
   const encoder = {
     assHead: [
       "[Script Info]",
@@ -589,15 +497,12 @@
       "; 如显示不正常请尝试使用SRT格式",
       "",
       "[V4+ Styles]",
-      "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, " +
-        "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, " +
-        "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+      "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
       "Style: Default,Segoe UI,48,&H00FFFFFF,&HF0000000,&H00000000,&HF0000000,1,0,0,0,100,100,0,0.00,1,1,3,2,30,30,20,1",
       "",
       "[Events]",
       "Format: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text",
     ],
-
     isDragging: false,
     dragOffsetX: 0,
     dragOffsetY: 0,
@@ -610,9 +515,7 @@
     resizeContainer: null,
 
     showDialog(data, download, lan) {
-      if (!data || !(data.body instanceof Array)) {
-        throw "数据错误";
-      }
+      if (!data || !(data.body instanceof Array)) throw "数据错误";
       this.data = data;
       this.currentLan = lan || null;
       const settingDiv = elements.createAs(
@@ -849,9 +752,7 @@
         },
         bottomPanel,
       );
-
       this._destroyDrag = this.initDragging(header, panel);
-
       this.updateDownload(type, download);
     },
 
@@ -897,26 +798,25 @@
     },
 
     initTextAreaResize(handle, container, panel) {
-      const minWidth = 310;
-      const minHeight = 180;
-      let resizing = false;
-      let startX = 0;
-      let startY = 0;
-      let startWidth = 0;
-      let startHeight = 0;
-
+      const minWidth = 310,
+        minHeight = 180;
+      let resizing = false,
+        startX = 0,
+        startY = 0,
+        startWidth = 0,
+        startHeight = 0;
       const onMove = (e) => {
         if (!resizing) return;
-        const maxWidth = Math.max(minWidth, window.innerWidth - 40);
-        const maxHeight = Math.max(minHeight, window.innerHeight - 170);
+        const maxWidth = Math.max(minWidth, window.innerWidth - 40),
+          maxHeight = Math.max(minHeight, window.innerHeight - 170);
         const width = Math.max(
-          minWidth,
-          Math.min(maxWidth, startWidth + e.clientX - startX),
-        );
-        const height = Math.max(
-          minHeight,
-          Math.min(maxHeight, startHeight + e.clientY - startY),
-        );
+            minWidth,
+            Math.min(maxWidth, startWidth + e.clientX - startX),
+          ),
+          height = Math.max(
+            minHeight,
+            Math.min(maxHeight, startHeight + e.clientY - startY),
+          );
         container.style.width = width + "px";
         container.style.height = height + "px";
         if (panel) panel.style.width = Math.max(340, width + 30) + "px";
@@ -945,7 +845,6 @@
 
     initDragging(handle, container) {
       const self = this;
-
       const onMouseDown = function (e) {
         if (
           e.target.tagName === "BUTTON" ||
@@ -962,20 +861,16 @@
         container.style.transition = "none";
         e.preventDefault();
       };
-
       const onMouseMove = function (e) {
         if (!self.isDragging) return;
-        const x = e.clientX - self.dragOffsetX;
-        const y = e.clientY - self.dragOffsetY;
-        const maxX = window.innerWidth - container.offsetWidth;
-        const maxY = window.innerHeight - container.offsetHeight;
-        const clampedX = Math.max(0, Math.min(x, maxX));
-        const clampedY = Math.max(0, Math.min(y, maxY));
-        container.style.left = clampedX + "px";
-        container.style.top = clampedY + "px";
+        const x = e.clientX - self.dragOffsetX,
+          y = e.clientY - self.dragOffsetY;
+        const maxX = window.innerWidth - container.offsetWidth,
+          maxY = window.innerHeight - container.offsetHeight;
+        container.style.left = Math.max(0, Math.min(x, maxX)) + "px";
+        container.style.top = Math.max(0, Math.min(y, maxY)) + "px";
         container.style.transform = "none";
       };
-
       const onMouseUp = function () {
         if (self.isDragging) {
           self.isDragging = false;
@@ -983,11 +878,9 @@
           container.style.transition = "transform 0.2s, left 0.2s, top 0.2s";
         }
       };
-
       handle.addEventListener("mousedown", onMouseDown);
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
-
       return function destroy() {
         handle.removeEventListener("mousedown", onMouseDown);
         document.removeEventListener("mousemove", onMouseMove);
@@ -1001,7 +894,6 @@
         this.showToast("没有可复制的内容！", "error");
         return;
       }
-
       try {
         if (typeof GM_setClipboard !== "undefined") {
           GM_setClipboard(text, "text");
@@ -1032,7 +924,6 @@
       document.body.appendChild(textArea);
       textArea.focus();
       textArea.select();
-
       try {
         const successful = document.execCommand("copy");
         if (successful) {
@@ -1043,7 +934,6 @@
       } catch (err) {
         this.showToast("❌ 复制失败，请手动复制", "error");
       }
-
       document.body.removeChild(textArea);
     },
 
@@ -1066,7 +956,6 @@
     showToast(message, type = "success") {
       const existing = document.querySelector(".copy-success-toast");
       if (existing) existing.remove();
-
       const toast = elements.createAs(
         "div",
         {
@@ -1076,7 +965,6 @@
         },
         document.body,
       );
-
       setTimeout(() => {
         if (toast.parentNode) toast.parentNode.removeChild(toast);
       }, 2000);
@@ -1151,40 +1039,33 @@
           .join("\r\n\r\n")
       );
     },
-    encodeToASS(data) {
-      this.assHead[1] = `Title: ${document.title}`;
-      this.assHead[10] = `; 字幕来源${document.location}`;
-      return this.assHead
-        .concat(
-          data.map(({ from, to, content }) => {
-            return `Dialogue: 0,${this.encodeTime(from, "ASS")},${this.encodeTime(to, "ASS")},*Default,NTP,0000,0000,0000,,${content.replace(/\n/g, "\\N")}`;
-          }),
+    // ✅ 修复：函数内使用局部副本，并把标题/来源作为参数
+    encodeToASS(data, title = document.title, source = document.location.href) {
+      const head = this.assHead.slice();
+      head[1] = `Title: ${title}`;
+      head[10] = `; 字幕来源 ${source}`;
+      return head.concat(
+        data.map(({ from, to, content }) =>
+          `Dialogue: 0,${this.encodeTime(from, "ASS")},${this.encodeTime(to, "ASS")},*Default,NTP,0000,0000,0000,,${content.replace(/\n/g, "\\N")}`
         )
-        .join("\r\n");
+      ).join("\r\n");
     },
     encodeTime(input, format = "SRT") {
-      const time = new Date(input * 1000);
-      const ms = time.getMilliseconds();
-      const second = time.getSeconds();
-      const minute = time.getMinutes();
-      const hour = Math.floor(input / 60 / 60);
+      const time = new Date(input * 1000),
+        ms = time.getMilliseconds(),
+        second = time.getSeconds(),
+        minute = time.getMinutes(),
+        hour = Math.floor(input / 60 / 60);
       const pad = (n, len = 2) => String(n).padStart(len, "0");
-
-      if (format === "SRT" || format === "VTT") {
-        return (
-          `${pad(hour)}:${pad(minute)}:${pad(second)}` +
-          `${format === "SRT" ? "," : "."}${pad(ms, 3)}`
-        );
-      }
-      if (format === "ASS") {
+      if (format === "SRT" || format === "VTT")
+        return `${pad(hour)}:${pad(minute)}:${pad(second)}${format === "SRT" ? "," : "."}${pad(ms, 3)}`;
+      if (format === "ASS")
         return `${hour}:${pad(minute)}:${pad(second)}.${pad(Math.floor(ms / 10), 2)}`;
-      }
       const totalMin = minute + hour * 60;
       return `[${pad(totalMin)}:${pad(second)}.${pad(Math.floor(ms / 10), 2)}]`;
     },
   };
 
-  //解码器，用于读取常见格式字幕并将其转换为B站可以读取BCC格式字幕
   const decoder = {
     srtReg:
       /(?:(\d+):)?(\d{1,2}):(\d{1,2})[,\.](\d{1,3})\s*(?:-->|,)\s*(?:(\d+):)?(\d{1,2}):(\d{1,2})[,\.](\d{1,3})\r?\n([.\s\S]+)/,
@@ -1197,20 +1078,16 @@
     file: undefined,
     data: undefined,
     statusHandler: undefined,
-
     isDragging: false,
     dragOffsetX: 0,
     dragOffsetY: 0,
-
     show(handler) {
       this.statusHandler = handler;
-
       const playerEl = elements.getAs("#bilibiliPlayer");
       if (!playerEl) {
         bilibiliCCHelper.toast("找不到播放器容器，无法打开本地字幕面板");
         return;
       }
-
       if (!this.dialog) {
         this.moveAction = (ev) => this.dialogMove(ev);
         this.dialog = elements.createAs(
@@ -1314,14 +1191,11 @@
         playerEl.appendChild(this.dialog);
         this.handleSubtitle();
       }
-
       if (typeof this._destroyDrag === "function") this._destroyDrag();
       this._destroyDrag = this.initDragging(this._dragHandle, this.dialog);
     },
-
     initDragging(handle, container) {
       const self = this;
-
       const onMouseDown = function (e) {
         if (e.target.innerHTML === "×") return;
         e.stopPropagation();
@@ -1333,36 +1207,31 @@
         container.style.transition = "none";
         e.preventDefault();
       };
-
       const onMouseMove = function (e) {
         if (!self.isDragging) return;
-        const x = e.clientX - self.dragOffsetX;
-        const y = e.clientY - self.dragOffsetY;
-        const maxX = window.innerWidth - container.offsetWidth;
-        const maxY = window.innerHeight - container.offsetHeight;
+        const x = e.clientX - self.dragOffsetX,
+          y = e.clientY - self.dragOffsetY;
+        const maxX = window.innerWidth - container.offsetWidth,
+          maxY = window.innerHeight - container.offsetHeight;
         container.style.left = Math.max(0, Math.min(x, maxX)) + "px";
         container.style.top = Math.max(0, Math.min(y, maxY)) + "px";
         container.style.transform = "none";
       };
-
       const onMouseUp = function () {
         if (self.isDragging) {
           self.isDragging = false;
           handle.style.cursor = "move";
         }
       };
-
       handle.addEventListener("mousedown", onMouseDown);
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
-
       return function destroy() {
         handle.removeEventListener("mousedown", onMouseDown);
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
       };
     },
-
     dialogMove(ev) {},
     readFile() {
       if (!this.file) {
@@ -2246,10 +2115,16 @@
     floatButton: null,
     floatButtonHiddenThisPage: false,
     floatButtonPrefKey: "bilibili_cc_float_button_hidden_v1",
+
+    // 用于控制取消状态
+    _asrAbortController: null,
+    _asrXHR: null,
+    _asrProgressTimer: null,
+    _asrDsWindow: null,
+
     DEEPSEEK_WHALE_SVG:
-      '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-      '<path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"></path>' +
-      "</svg>",
+      '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"></path></svg>',
+
     registerMenuCommands() {
       if (
         this.menuCommandsRegistered ||
@@ -2266,14 +2141,70 @@
       );
     },
 
+    showProgressUI(message) {
+      let el = document.getElementById("cc-progress-ui");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "cc-progress-ui";
+        el.style.cssText =
+          "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:12px 24px;border-radius:30px;font-size:14px;z-index:1048579;display:flex;align-items:center;gap:12px;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:all 0.3s;";
+        el.innerHTML = `<div style="width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:cc-spin 1s linear infinite;"></div><span id="cc-progress-text">${message}</span><style>@keyframes cc-spin { 100% { transform: rotate(360deg); } }</style>`;
+        document.body.appendChild(el);
+      } else {
+        document.getElementById("cc-progress-text").innerText = message;
+      }
+    },
+    updateProgressUI(message) {
+      const textEl = document.getElementById("cc-progress-text");
+      if (textEl) textEl.innerText = message;
+    },
+    hideProgressUI() {
+      const el = document.getElementById("cc-progress-ui");
+      if (el) el.remove();
+    },
+
     async sendLocalAsrToDeepSeekClean(btn) {
-      if (btn) {
-        btn.style.pointerEvents = "none";
-        btn.style.opacity = "0.65";
+      // ================= 取消逻辑 =================
+      if (btn.dataset.running === "1") {
+        if (this._asrAbortController) {
+          this._asrAbortController.abort();
+          this._asrAbortController = null;
+        }
+        if (this._asrXHR) {
+          this._asrXHR.abort();
+          this._asrXHR = null;
+        }
+        if (this._asrProgressTimer) {
+          clearInterval(this._asrProgressTimer);
+          this._asrProgressTimer = null;
+        }
+        this.hideProgressUI();
+
+        // 通知后端取消
+        if (this._currentTaskId && typeof GM_xmlhttpRequest !== "undefined") {
+          GM_xmlhttpRequest({
+            method: "POST",
+            url: `http://127.0.0.1:8001/api/cancel/${this._currentTaskId}`,
+          });
+          this._currentTaskId = null;
+        }
+
+        btn.dataset.running = "0";
+        btn.innerHTML =
+          this.DEEPSEEK_WHALE_SVG +
+          '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>';
+        btn.style.background = "linear-gradient(135deg,#2e7d32,#43a047)";
+        encoder.showToast("🛑 已取消本地识别", "error");
+        return;
       }
 
-      // 立刻打开一个空白标签页，防止被浏览器拦截
-      const dsWindow = window.open("about:blank", "_blank");
+      // ================= 启动逻辑 =================
+      btn.dataset.running = "1";
+      btn.innerHTML =
+        '<span style="font-size:12px;font-weight:bold;">取消</span>';
+      btn.style.background = "linear-gradient(135deg,#d32f2f,#e53935)";
+
+      this._asrAbortController = new AbortController();
 
       try {
         encoder.showToast("正在获取音频流…");
@@ -2281,121 +2212,184 @@
         // 1. 获取视频 bvid 和 cid
         let bvid = this.getInfo("bvid") || this.bvid;
         let cid = this.cid;
-
         const win = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
         if (!cid && win.__INITIAL_STATE__?.videoData?.pages) {
           const p = win.__INITIAL_STATE__?.p || 1;
           cid = win.__INITIAL_STATE__.videoData.pages[p - 1].cid;
         }
-        if (!bvid || !cid) throw "无法获取视频信息(bvid/cid)，请刷新页面";
+        if (!bvid || !cid) throw "无法获取视频信息，请刷新页面";
 
         // 2. 请求 API 获取音频流
         const apiUrl = `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&fnval=16`;
         const playurlResp = await fetch(apiUrl);
         const playurlData = await playurlResp.json();
+        let audioUrl = playurlData?.data?.dash?.audio?.[0]?.baseUrl;
+        if (!audioUrl) throw "解析音频流失败";
 
-        let audioUrl = "";
-        if (
-          playurlData.code === 0 &&
-          playurlData.data &&
-          playurlData.data.dash
-        ) {
-          const audios = playurlData.data.dash.audio;
-          if (audios && audios.length > 0) {
-            audioUrl = audios[0].baseUrl || audios[0].base_url;
-          }
-        }
-
-        if (!audioUrl && win.__playinfo__?.data?.dash?.audio) {
-          audioUrl = win.__playinfo__.data.dash.audio[0].baseUrl;
-        }
-        if (!audioUrl) throw "解析音频流失败，可能是特殊视频或接口变动";
-
-        // 3. 下载音频 Blob (绕过脚本内被覆盖的 fetch)
-        encoder.showToast("正在下载音频（需等待几秒）…");
+        // 3. 下载音频 Blob
+        encoder.showToast("正在下载音频…");
         let audioBlob;
         try {
           const nativeFetch =
             typeof unsafeWindow !== "undefined" && unsafeWindow.fetch
               ? unsafeWindow.fetch
               : window.fetch;
-          const resp = await nativeFetch(audioUrl);
+          const resp = await nativeFetch(audioUrl, {
+            signal: this._asrAbortController.signal,
+          });
           audioBlob = await resp.blob();
         } catch (e) {
-          audioBlob = await new Promise((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open("GET", audioUrl);
-            xhr.responseType = "blob";
-            xhr.onload = () => {
-              if (xhr.status === 200) resolve(xhr.response);
-              else reject(new Error("XHR 下载音频失败"));
-            };
-            xhr.onerror = () => reject(new Error("网络错误，下载音频失败"));
-            xhr.send();
-          });
+          if (e.name === "AbortError") throw "用户取消了下载";
+          throw e;
         }
 
-        // 4. 发送给本地 8001 服务
-        encoder.showToast("发送给本地识别中…");
+        // 4. 心跳检测（检查服务是否在线）
+        encoder.showToast("正在检查本地服务状态…");
+        let isServerRunning = false;
+        try {
+          await new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+              method: "GET",
+              url: "http://127.0.0.1:8001/docs",
+              timeout: 2000,
+              onload: () => resolve(),
+              onerror: () => reject(),
+              ontimeout: () => reject(),
+            });
+          });
+          isServerRunning = true;
+        } catch (e) {
+          isServerRunning = false;
+        }
+
+        // 5. 如果服务未运行，触发自定义协议唤醒（配合 install_protocol.sh）
+        if (!isServerRunning) {
+          encoder.showToast("正在唤醒本地服务，请在弹出的提示中点击允许…");
+          window.open("bili-asr://start", "_blank"); // 触发系统协议
+
+          // 改为循环轮询，最多等 30 秒，每 2 秒查一次
+          let wakeSuccess = false;
+          for (let i = 0; i < 15; i++) {
+            // 等待 2 秒
+            await new Promise((r) => setTimeout(r, 2000));
+
+            // 如果用户中途点了“取消”
+            if (btn.dataset.running !== "1") throw "用户取消";
+
+            try {
+              await new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                  method: "GET",
+                  url: "http://127.0.0.1:8001/docs",
+                  timeout: 1000,
+                  onload: () => resolve(),
+                  onerror: () => reject(),
+                  ontimeout: () => reject(),
+                });
+              });
+              wakeSuccess = true;
+              break; // 连通了，立刻跳出循环
+            } catch (e) {
+              // 没连通，继续循环，顺便更新一下进度条文案
+              this.updateProgressUI(`等待本地服务启动… (${(i + 1) * 2}s)`);
+            }
+          }
+
+          if (!wakeSuccess) {
+            throw "❌ 自动唤醒失败，请确认浏览器已允许打开外部应用，或手动运行 server.py";
+          }
+          encoder.showToast("✅ 服务已成功唤醒");
+        }
+
+        // 6. 显示进度条，提交任务给 8001 端口
+        this.showProgressUI("发送给本地识别中...");
         const formData = new FormData();
         formData.append("file", audioBlob, "audio.m4s");
 
-        const text = await new Promise((resolve, reject) => {
-          GM_xmlhttpRequest({
+        const taskId = await new Promise((resolve, reject) => {
+          this._asrXHR = GM_xmlhttpRequest({
             method: "POST",
             url: "http://127.0.0.1:8001/api/transcribe",
             data: formData,
             timeout: 600000,
             onload: (r) => {
-              if (r.status === 200) {
-                const data = JSON.parse(r.responseText);
-                resolve(data.text);
-              } else {
-                reject(new Error(r.responseText || "识别失败"));
-              }
+              this._asrXHR = null;
+              if (r.status === 200) resolve(JSON.parse(r.responseText).task_id);
+              else reject(new Error("提交失败"));
             },
-            onerror: () => reject(new Error("无法连接本地 8001 服务")),
-            ontimeout: () => reject(new Error("识别超时")),
+            onerror: () => reject(new Error("无法连接本地服务")),
+            onabort: () => reject(new Error("用户取消")),
           });
         });
 
+        this._currentTaskId = taskId;
+
+        // 7. 轮询进度
+        const text = await new Promise((resolve, reject) => {
+          this._asrProgressTimer = setInterval(() => {
+            if (btn.dataset.running !== "1") {
+              clearInterval(this._asrProgressTimer);
+              return reject(new Error("用户取消"));
+            }
+            GM_xmlhttpRequest({
+              method: "GET",
+              url: `http://127.0.0.1:8001/api/progress/${taskId}`,
+              onload: (r) => {
+                if (r.status !== 200) return;
+                const task = JSON.parse(r.responseText);
+                if (task.status === "completed") {
+                  clearInterval(this._asrProgressTimer);
+                  resolve(task.text);
+                } else if (task.status === "failed") {
+                  clearInterval(this._asrProgressTimer);
+                  reject(new Error(task.message || "识别失败"));
+                } else {
+                  this.updateProgressUI(`${task.message} (${task.progress}%)`);
+                }
+              },
+            });
+          }, 1000);
+        });
+
+        this.hideProgressUI();
         if (!text || !text.trim()) throw "识别结果为空";
 
-        // 5. 组装 Prompt 并发送 DeepSeek
+        // 8. 组装 Prompt
         const title = this.getCleanTitle();
         const prompt =
           this.OBSIDIAN_SKILL_PROMPT +
-          `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n` +
-          `视频标题：${title}\n` +
-          `字幕来源：纯本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n\n` +
+          `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n视频标题：${title}\n字幕来源：纯本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n\n` +
           text;
 
-        let stored = false;
         try {
           if (typeof GM_setValue === "function") {
             GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
-            stored = true;
           }
         } catch (e) {}
-
         await this.copyTextToClipboard(prompt);
 
-        if (dsWindow) {
-          dsWindow.location.href = "https://chat.deepseek.com/";
+        // 9. 打开 DeepSeek
+        if (typeof GM_openInTab !== "undefined") {
+          GM_openInTab("https://chat.deepseek.com/", { active: true });
         } else {
-          encoder.showToast("⚠️ 弹窗被拦截，内容已复制，请手动打开 DeepSeek");
+          window.open("https://chat.deepseek.com/", "_blank");
         }
-        encoder.showToast(
-          stored ? "✅ 已跳转 DeepSeek 自动发送…" : "✅ 已复制，请手动粘贴发送",
-        );
+
+        encoder.showToast("✅ 已跳转 DeepSeek 自动发送…");
       } catch (e) {
         console.error("纯本地识别失败", e);
-        encoder.showToast(`❌ 失败：${e.message || e}`, "error");
-        if (dsWindow) dsWindow.close();
+        this.hideProgressUI();
+        if (e.message !== "用户取消" && e !== "用户取消") {
+          encoder.showToast(`❌ 失败：${e.message || e}`, "error");
+        }
       } finally {
+        this._currentTaskId = null;
         if (btn) {
-          btn.style.pointerEvents = "";
-          btn.style.opacity = "";
+          btn.dataset.running = "0";
+          btn.innerHTML =
+            this.DEEPSEEK_WHALE_SVG +
+            '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>';
+          btn.style.background = "linear-gradient(135deg,#2e7d32,#43a047)";
         }
       }
     },
@@ -2657,7 +2651,6 @@
         this.deepseekFloatButton,
         this.deepseekTimestampButton,
       ].filter(Boolean);
-
       buttons.forEach((btn) => {
         if (!btn.dataset.originalTitle) {
           btn.dataset.originalTitle = btn.title || "";
@@ -2744,6 +2737,7 @@
       this.applyFloatingButtonVisibility();
       this.toast("悬浮按钮已永久关闭，可从插件菜单重新打开");
     },
+
     async copyCurrentSubtitleSRT(btn) {
       if (btn) {
         btn.style.pointerEvents = "none";
@@ -3215,10 +3209,7 @@
 
         const prompt =
           this.OBSIDIAN_SKILL_PROMPT +
-          `\n\n===== 以下是要处理的视频字幕 =====\n` +
-          `视频标题：${title}\n` +
-          `字幕语言：${lanDoc}\n` +
-          `字幕条数：${data.body.length}\n\n` +
+          `\n\n===== 以下是要处理的视频字幕 =====\n视频标题：${title}\n字幕语言：${lanDoc}\n字幕条数：${data.body.length}\n\n` +
           srt;
 
         let stored = false;
@@ -3228,10 +3219,8 @@
             stored = true;
           }
         } catch (e) {}
-
         await this.copyTextToClipboard(prompt);
         window.open("https://chat.deepseek.com/", "_blank");
-
         encoder.showToast(
           stored
             ? "✅ 已打开 DeepSeek，正在自动发送字幕…"
@@ -3277,10 +3266,7 @@
         const prompt =
           this.OBSIDIAN_SKILL_PROMPT +
           this.OBSIDIAN_TIMESTAMP_EXTRA +
-          `\n\n===== 以下是要处理的视频字幕（每条均带时间戳）=====\n` +
-          `视频标题：${title}\n` +
-          `字幕语言：${lanDoc}\n` +
-          `字幕条数：${data.body.length}\n\n` +
+          `\n\n===== 以下是要处理的视频字幕（每条均带时间戳）=====\n视频标题：${title}\n字幕语言：${lanDoc}\n字幕条数：${data.body.length}\n\n` +
           timestamped;
 
         let stored = false;
@@ -3290,10 +3276,8 @@
             stored = true;
           }
         } catch (e) {}
-
         await this.copyTextToClipboard(prompt);
         window.open("https://chat.deepseek.com/", "_blank");
-
         encoder.showToast(
           stored
             ? "✅ 已打开 DeepSeek，正在自动发送带时间戳的字幕…"
@@ -3373,7 +3357,6 @@
         }
         menu.remove();
       };
-
       const addItem = (label, handler) =>
         elements.createAs(
           "div",
@@ -3412,8 +3395,8 @@
       );
       addItem("永久关闭悬浮按钮", () => this.hideFloatingButtonPermanently());
 
-      const width = 210;
-      const height = 122 + 36 * 5;
+      const width = 210,
+        height = 122 + 36 * 5;
       menu.style.left =
         Math.max(8, Math.min(x, window.innerWidth - width - 8)) + "px";
       menu.style.top =
@@ -3643,7 +3626,11 @@
     encodeBatchSubtitle(data, type) {
       switch (String(type).toUpperCase()) {
         case "ASS":
-          return encoder.encodeToASS(data.body);
+          return encoder.encodeToASS(
+            data.body,
+            item.title,
+            this.getStandardVideoUrl?.() || document.location.href,
+          );
         case "SRT":
           return encoder.encodeToSRT(data.body);
         case "LRC":
@@ -3764,11 +3751,9 @@
       startButton.dataset.busy = "1";
       startButton.style.opacity = "0.65";
       startButton.style.pointerEvents = "none";
-
       const CONCURRENCY = 4;
       const MAX_RETRY = 2;
       const RETRY_DELAY = 500;
-
       const entries = [];
       const failed = [];
       let completedCount = 0;
@@ -3780,9 +3765,8 @@
             return await this.fetchBatchSubtitle(item, language);
           } catch (e) {
             lastErr = e;
-            if (attempt < MAX_RETRY) {
+            if (attempt < MAX_RETRY)
               await new Promise((r) => setTimeout(r, RETRY_DELAY));
-            }
           }
         }
         throw lastErr;
@@ -4226,16 +4210,14 @@
 
     setupData(force) {
       const currentPcid = this.getEpInfo();
-      if (this.subtitle && this.pcid == currentPcid && !force) {
+      if (this.subtitle && this.pcid == currentPcid && !force)
         return Promise.resolve(this.subtitle);
-      }
       if (
         !force &&
         this._setupPromise &&
         this._setupPromisePcid === currentPcid
-      ) {
+      )
         return this._setupPromise;
-      }
       const p = this._setupDataImpl(force);
       this._setupPromise = p;
       this._setupPromisePcid = currentPcid;
@@ -4272,9 +4254,7 @@
       decoder.data = undefined;
 
       const res = await fetch(
-        `https://api.bilibili.com/x/player${this.cid ? "/wbi" : ""}/v2?${
-          this.cid ? `cid=${this.cid}` : `&ep_id=${this.epid}`
-        }${this.aid ? `&aid=${this.aid}` : `&bvid=${this.bvid}`}`,
+        `https://api.bilibili.com/x/player${this.cid ? "/wbi" : ""}/v2?${this.cid ? `cid=${this.cid}` : `&ep_id=${this.epid}`}${this.aid ? `&aid=${this.aid}` : `&bvid=${this.bvid}`}`,
         { credentials: "include" },
       );
       if (res.status != 200) throw "请求字幕配置失败:" + res.statusText;
@@ -4282,9 +4262,7 @@
 
       if (ret.code == -404) {
         const res2 = await fetch(
-          `//api.bilibili.com/x/v2/dm/view?${
-            this.aid ? `aid=${this.aid}` : `bvid=${this.bvid}`
-          }&oid=${this.cid}&type=1`,
+          `//api.bilibili.com/x/v2/dm/view?${this.aid ? `aid=${this.aid}` : `bvid=${this.bvid}`}&oid=${this.cid}&type=1`,
           { credentials: "include" },
         );
         const ret2 = await res2.json();
