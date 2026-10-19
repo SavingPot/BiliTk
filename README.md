@@ -1,6 +1,4 @@
-# BiliTk——Bilibili Toolkit
-
-# 这是什么
+# BiliTk——Bilibili Toolkit 是什么
 这是一个基于油猴脚本的B站助手，主要功能是：
 - 字幕下载（无字幕时，可退回到本地字幕识别（ASR））
 - 基于字幕的视频 AI 总结（可以选择是否带有对应时间）
@@ -15,7 +13,7 @@
 <br>
 <br>
 
-## 特别之处（以及为什么要自己开发一个脚本）
+# 一. 特别之处（以及为什么要自己开发一个脚本）
 1. 该脚本的总结功能与常见的 B 站助手的区别是，它适合用来直接生成可复制的完整笔记，而不是没用的视频目录。它完全基于字幕来总结，并且会自动修正字幕，生成的内容可以直接作为笔记复制，没有常规助手那样的突兀字幕与图片。
 2. 本脚本的宗旨是极致快捷，所以按钮默认不折叠、不隐藏，而是完整显示，而且绝大多数的按钮只要轻点一下即可完成所有操作。
 3. 如今有用的文章越来越少，而依赖视频和AI的人越来越多。许多视频本可以作为一个文章发布，但却为了迎合用户需求做成了视频，而这个脚本就可以帮助你把视频变成文章或笔记，让你快速看完改视频。当然，一个深度的视频并不输给文字，所以如果视频的内容很好，那么也建议你看完原视频。
@@ -23,8 +21,8 @@
 <br>
 <br>
 
-## 安装方法
-### 方法一. 手动安装（目前只支持手动安装）
+# 二. 安装方法
+## 方法一. 手动安装（目前只支持手动安装）
 1. 安装用户脚本管理器（此处以 Tampermonkey 为例），例如 [Tampermonkey](https://www.tampermonkey.net/) 和 [Violentmonkey](https://violentmonkey.github.io/)。
 2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要先在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本。
 3. 打开管理器，选择“新建脚本”。
@@ -91,7 +89,7 @@ wget https://hf-mirror.com/FunAudioLLM/SenseVoiceSmall/resolve/main/am.mvn -P Se
 mv model_quant.onnx model.onnx #伪装成全精度（FP32）的原始模型
 ```
 
-使用 `uv run server.py` 来启动 ASR 服务器
+
 
 注意：如果在运行 ASR 的过程中，服务器突然自己关掉了，那么大概率是内存不足，导致进程被系统杀了，例如
 ```bash
@@ -104,15 +102,7 @@ savingpot@savingpot-Katana-GF66-11UC:~/Tools/bili-tk-asr$
 
 ![第一次运行时，建议勾选始终允许](image.png)
 
-是的，**只要是通过 `bili-asr://start` 协议唤起的，它就是完全静默挂在后台的**。
 
-这得益于我们之前在 `launch_asr.sh` 脚本和 `.desktop` 文件里做的两个关键设置：
-1. `Terminal=false`：告诉系统不需要弹出一个黑色的终端窗口。
-2. `nohup ... &`：把 Python 进程完全扔到后台去执行，并且把所有的输出（包括模型加载、推理进度、报错等）全部重定向写入了项目目录下的 **`asr.log`** 文件里。
-
-### 💡 这样做的好处与代价
-*   **好处**：极度无感。用户点完 B 站按钮，后台服务自己就悄悄起来了，不会突然弹个终端吓到用户，也不会抢占窗口焦点。
-*   **代价**：你无法直观地看到它的运行状态，也不知道它什么时候停。
 
 ### 🔍 如果想看它在干什么，或者想关掉它，怎么办？
 自动启动的 server.py 是静默的。如果你希望调试它，可以这几个常用命令：
@@ -133,18 +123,24 @@ tail -f /mnt/superfast/Projects/Tools/Python/bili-tk-asr/asr.log
 pkill -f "bili-tk-asr/server.py"
 ```
 
+**4. 手动、非静默地启动服务器**
+先定位到 bili-tk-asr 文件夹，然后运行
+```bash
+uv run server.py
+```
+
 
 <br>
 <br>
 
-## 使用方法
+# 三. 使用方法
 
 打开任意一个 B 站视频，就可以使用右上角的按钮了！
 
 <br>
 <br>
 
-## 工作原理
+# 四. 工作原理
 1. 脚本下载字幕的过程中内置限流、抖动等安全功能。<br>
 2. 发送到 DeepSeek 功能是把 Skill 和字幕内容一起发送给 DeepSeek 网页端，原理是模拟用户的点击、粘贴、回车等等，因此风险相对较低。
 3. 适用于绝大多数的 B 站页面，无论是普通页面，收藏列表播放页面还是稍后再看页面都可以。
@@ -152,7 +148,7 @@ pkill -f "bili-tk-asr/server.py"
 <br>
 <br>
 
-## 注意
+# 五. 注意
 1. 本工具仅供个人学习使用，不得商用。
 2. 有条件的用户请使用 BYOK 以支持国内的 AI 发展。
 3. 目前 AI 总结仅支持 DeepSeek。
@@ -162,7 +158,7 @@ pkill -f "bili-tk-asr/server.py"
 <br>
 <br>
 
-## 特别鸣谢
+# 六. 特别鸣谢
 - 来自 [BiliClipper](https://github.com/echore/bili-clipper) 的灵感启发
 - 来自 [Bilibili CC Subtitle Tool](https://github.com/WanderLandWalker/Bilibili-CC-Subtitle-Tool) 的字幕下载部分脚本
 - 来自 [kaixinol](https://update.greasyfork.org/scripts/580254/1837601/Bilibili%20WBI%20Signer%20Library.js) 的 WBI 签名代码
