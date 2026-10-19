@@ -22,7 +22,9 @@
 <br>
 
 # 二. 安装方法
-## 方法一. 手动安装（目前只支持手动安装）
+## 1. 插件本体的安装
+### 方法一. 手动安装（目前只支持手动安装）
+#### 安装脚本
 1. 安装用户脚本管理器（此处以 Tampermonkey 为例），例如 [Tampermonkey](https://www.tampermonkey.net/) 和 [Violentmonkey](https://violentmonkey.github.io/)。
 2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要先在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本。
 3. 打开管理器，选择“新建脚本”。
@@ -32,11 +34,11 @@
 
 
 
-## 如何接入语音模型
+## 2. ASR 功能（语音模型）的安装
 
 有些视频 UP 主关闭了 CC 字幕，所以没法直接总结，那么就需要在本地进行语音转字幕。由于用户脚本的权限有限，所以需要连接外部程序，这里我使用的是 [Bili2Text](https://github.com/lanbinleo/bili2text)，因此需要配置 Python环境
 
-### 配置 UV
+### ①配置 UV
 
 首先需要检查是否有 uv（Python 的一种 Rust 重写的高效包管理器）。如果没有的话，运行以下指令来运行官方的安装脚本（注意：这一步可能很慢，所以尽量挂梯子，或使用镜像源）：
 
@@ -53,7 +55,7 @@ wget -qO- https://astral.sh/uv/install.sh | sh
 还没写
 
 
-### 配置 bili-tk-asr
+### ②配置 bili-tk-asr
 
 
 先找到一个地方用来放置 asr 脚本，在那里打开终端
@@ -104,7 +106,7 @@ savingpot@savingpot-Katana-GF66-11UC:~/Tools/bili-tk-asr$
 
 
 
-### 🔍 如果想看它在干什么，或者想关掉它，怎么办？
+### ③🔍 如果想看 bili-tk-asr 在干什么，或者想关掉它，怎么办？
 自动启动的 server.py 是静默的。如果你希望调试它，可以这几个常用命令：
 
 **1. 看它在不在跑（状态）**
@@ -123,8 +125,8 @@ tail -f /mnt/superfast/Projects/Tools/Python/bili-tk-asr/asr.log
 pkill -f "bili-tk-asr/server.py"
 ```
 
-**4. 手动、非静默地启动服务器**
-先定位到 bili-tk-asr 文件夹，然后运行
+**4. 可以不静默打开，而是手动、非静默地启动服务器**
+先确保没有正在运行的 server.py，然后先定位到 bili-tk-asr 文件夹，然后运行
 ```bash
 uv run server.py
 ```
