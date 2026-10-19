@@ -178,7 +178,7 @@ pkill -f "bili-tk-asr/server.py"
 ## 特别鸣谢
 - 来自 [BiliClipper](https://github.com/echore/bili-clipper) 的灵感启发
 - 来自 [Bilibili CC Subtitle Tool](https://github.com/WanderLandWalker/Bilibili-CC-Subtitle-Tool) 的字幕下载部分脚本
-
+- 来自 [kaixinol](https://update.greasyfork.org/scripts/580254/1837601/Bilibili%20WBI%20Signer%20Library.js) 的 WBI 签名代码
 
 
 如果该脚本帮助到了你，请务必给一个免费的 Star！

@@ -110,11 +110,12 @@
           return true;
         }
         input.focus();
-        input.textContent = text;
-        input.dispatchEvent(
-          new InputEvent("input", { bubbles: true, cancelable: true }),
-        );
-        return true;
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(input);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return document.execCommand("insertText", false, text);
       } catch (e) {
         console.warn("[BiliTK→DS] value setter 注入失败，尝试 execCommand", e);
       }
@@ -213,6 +214,20 @@
       if (!input) return;
 
       if (!simulateTyping(input, pending.text)) return cleanup();
+
+      //自检（用来应对 DeepSeek 可能的输入框变化）
+      const actual =
+        input.tagName === "TEXTAREA" || input.tagName === "INPUT"
+          ? input.value
+          : input.innerText || input.textContent || "";
+      if (!actual.trim()) {
+        console.warn(
+          "[BiliTK→DS] 输入框是空的，DeepSeek 可能换了输入框结构",
+          input,
+        );
+        // 可选：encoder.showToast("⚠️ DeepSeek 输入框结构变化，自动发送可能失效", "error")
+        // 但 DeepSeek 页面没有 encoder，可以换成 alert 或页面上插个提示条
+      }
 
       setTimeout(() => {
         simulateSend(input);
@@ -476,6 +491,94 @@
       req.open("GET", url);
       req.send();
     });
+  }
+
+  // ============================================================
+  // Bilibili WBI 签名（内嵌自 Bilibili WBI Signer Library v1.2.0）
+  // 原作者：Kaesinol（https://greasyfork.org/scripts/580254）
+  // 说明：为避免第三方 @require 供应链风险，采用内嵌方式。
+  //       若 B 站修改签名算法，请手动同步更新本块。
+  // ============================================================
+  const WBI_MIXIN_KEY_ENC_TAB = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+    33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+    61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+    36, 20, 34, 44, 52,
+  ];
+
+  function wbiMd5(message) {
+    const buffer = new TextEncoder().encode(message);
+    const n = buffer.length;
+    const words = new Uint32Array((((n + 8) >> 6) + 1) << 4);
+    for (let i = 0; i < n; i++) words[i >> 2] |= buffer[i] << ((i % 4) * 8);
+    words[n >> 2] |= 0x80 << ((n % 4) * 8);
+    words[words.length - 2] = n * 8;
+    let [a, b, c, d] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
+    const K = Uint32Array.from(
+      { length: 64 },
+      (_, i) => (Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0,
+    );
+    const S = [
+      7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20,
+      5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4,
+      11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6,
+      10, 15, 21,
+    ];
+    const rotl = (x, k) => (x << k) | (x >>> (32 - k));
+    for (let i = 0; i < words.length; i += 16) {
+      let [A, B, C, D] = [a, b, c, d];
+      for (let j = 0; j < 64; j++) {
+        let f, g;
+        if (j < 16) {
+          f = (B & C) | (~B & D);
+          g = j;
+        } else if (j < 32) {
+          f = (D & B) | (~D & C);
+          g = (5 * j + 1) % 16;
+        } else if (j < 48) {
+          f = B ^ C ^ D;
+          g = (3 * j + 5) % 16;
+        } else {
+          f = C ^ (B | ~D);
+          g = (7 * j) % 16;
+        }
+        const temp = D;
+        D = C;
+        C = B;
+        const x = (A + f + K[j] + words[i + g]) | 0;
+        B = (B + rotl(x, S[j])) | 0;
+        A = temp;
+      }
+      a = (a + A) | 0;
+      b = (b + B) | 0;
+      c = (c + C) | 0;
+      d = (d + D) | 0;
+    }
+    const outBuf = new ArrayBuffer(16);
+    const view = new DataView(outBuf);
+    [a, b, c, d].forEach((val, i) => view.setUint32(i * 4, val, true));
+    return Array.from(new Uint8Array(outBuf))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  function wbiGetSignedQuery(params, img_key, sub_key) {
+    const orig = img_key + sub_key;
+    const mixin_key = WBI_MIXIN_KEY_ENC_TAB.map((n) => orig[n])
+      .join("")
+      .slice(0, 32);
+    const wts = Math.round(Date.now() / 1000);
+    const chrFilter = /[!'()*]/g;
+    const signedParams = { ...params, wts };
+    const query = Object.entries(signedParams)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) => {
+        const filteredValue = String(value).replace(chrFilter, "");
+        return `${encodeURIComponent(key)}=${encodeURIComponent(filteredValue)}`;
+      })
+      .join("&");
+    const wbiSign = wbiMd5(query + mixin_key);
+    return `${query}&w_rid=${wbiSign}`;
   }
 
   const encoder = {
@@ -1039,16 +1142,17 @@
           .join("\r\n\r\n")
       );
     },
-    // ✅ 修复：函数内使用局部副本，并把标题/来源作为参数
-    encodeToASS(data, title = document.title, source = document.location.href) {
+    encodeToASS(data, title = document.title) {
       const head = this.assHead.slice();
       head[1] = `Title: ${title}`;
-      head[10] = `; 字幕来源 ${source}`;
-      return head.concat(
-        data.map(({ from, to, content }) =>
-          `Dialogue: 0,${this.encodeTime(from, "ASS")},${this.encodeTime(to, "ASS")},*Default,NTP,0000,0000,0000,,${content.replace(/\n/g, "\\N")}`
+      // head[10] 保留原来的 `; 字幕来源${document.location}` —— 这行不改
+      return head
+        .concat(
+          data.map(({ from, to, content }) => {
+            return `Dialogue: 0,${this.encodeTime(from, "ASS")},${this.encodeTime(to, "ASS")},*Default,NTP,0000,0000,0000,,${content.replace(/\n/g, "\\N")}`;
+          }),
         )
-      ).join("\r\n");
+        .join("\r\n");
     },
     encodeTime(input, format = "SRT") {
       const time = new Date(input * 1000),
@@ -1816,6 +1920,8 @@
           'li.bui-select-item[data-value="close"]',
         ),
         localItem = closeItem.cloneNode();
+      delete localItem.dataset.value; //删除可能被继承的 data-value="close"
+      localItem.classList.remove("bui-select-item-active"); //删除可能被继承的 data-value="close"
       elements.setAs(downloadBtn, {
         style: "min-width:unset!important",
         innerText: "下载",
@@ -1959,6 +2065,7 @@
       this.panel = elements.getAs(
         ".bilibili-player-video-subtitle-setting-lan",
       );
+      if (!this.iconBtn) throw "找不到新播放器按钮";
       this.icon = this.iconBtn.querySelector(
         ".bilibili-player-iconfont-subtitle span",
       );
@@ -1971,7 +2078,7 @@
         this.initUI();
         this.iconBtn.id = "bilibili-player-subtitle-btn";
       } else if (this.iconBtn) {
-        this.iconBtn.style = "display:block";
+        this.iconBtn.style.display = "block";
         if (!this.hasSubtitles && this.icon)
           this.icon.innerHTML = elements.newDisableIcon;
         this.iconBtn.id = "bilibili-player-subtitle-btn";
@@ -2099,8 +2206,8 @@
       this.selectedLocal = false;
       this.iconBtn = elements.getAs(".squirtle-subtitle-wrap");
       this.panel = elements.getAs(".squirtle-subtitle-select-list");
-      this.icon = this.iconBtn.querySelector(".squirtle-subtitle-icon");
       if (!this.iconBtn) throw "找不到新播放器按钮";
+      this.icon = this.iconBtn.querySelector(".squirtle-subtitle-icon");
       if (this.panel) this.initUI();
     },
   };
@@ -2121,6 +2228,13 @@
     _asrXHR: null,
     _asrProgressTimer: null,
     _asrDsWindow: null,
+
+    // WBI keys 缓存
+    _wbiKeys: null,
+    _wbiKeysTime: 0,
+    _wbiKeysPromise: null,
+    _wbiWarned: false,
+    WBI_KEYS_TTL: 4 * 60 * 60 * 1000,
 
     DEEPSEEK_WHALE_SVG:
       '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"></path></svg>',
@@ -2164,16 +2278,31 @@
     },
 
     async sendLocalAsrToDeepSeekClean(btn) {
+      if (!btn) {
+        btn = this.localAsrDeepseekButton;
+        if (!btn) {
+          encoder.showToast("❌ 找不到本地识别按钮", "error");
+          return;
+        }
+      }
       // ================= 取消逻辑 =================
       if (btn.dataset.running === "1") {
         if (this._asrAbortController) {
           this._asrAbortController.abort();
           this._asrAbortController = null;
         }
+        /*
+        GM_xmlhttpRequest 的返回值在部分用户脚本管理器（旧版 Greasemonkey / 某些打包版）里没有 abort 方法，会 TypeError，导致整个取消逻辑崩掉
         if (this._asrXHR) {
           this._asrXHR.abort();
           this._asrXHR = null;
         }
+        */
+        if (this._asrXHR && typeof this._asrXHR.abort === "function") {
+          this._asrXHR.abort();
+        }
+        this._asrXHR = null;
+
         if (this._asrProgressTimer) {
           clearInterval(this._asrProgressTimer);
           this._asrProgressTimer = null;
@@ -2210,7 +2339,7 @@
         encoder.showToast("正在获取音频流…");
 
         // 1. 获取视频 bvid 和 cid
-        let bvid = this.getInfo("bvid") || this.bvid;
+        let bvid = this.getBvid();
         let cid = this.cid;
         const win = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
         if (!cid && win.__INITIAL_STATE__?.videoData?.pages) {
@@ -2221,7 +2350,7 @@
 
         // 2. 请求 API 获取音频流
         const apiUrl = `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&fnval=16`;
-        const playurlResp = await fetch(apiUrl);
+        const playurlResp = await fetch(apiUrl, { credentials: "include" });
         const playurlData = await playurlResp.json();
         let audioUrl = playurlData?.data?.dash?.audio?.[0]?.baseUrl;
         if (!audioUrl) throw "解析音频流失败";
@@ -2307,18 +2436,39 @@
         formData.append("file", audioBlob, "audio.m4s");
 
         const taskId = await new Promise((resolve, reject) => {
+          let settled = false;
+          const cleanup = () => {
+            settled = true;
+            this._asrXHR = null;
+          };
+          const ok = (id) => {
+            if (settled) return;
+            cleanup();
+            resolve(id);
+          };
+          const fail = (msg) => {
+            if (settled) return;
+            cleanup();
+            reject(new Error(msg));
+          };
           this._asrXHR = GM_xmlhttpRequest({
             method: "POST",
             url: "http://127.0.0.1:8001/api/transcribe",
             data: formData,
             timeout: 600000,
             onload: (r) => {
-              this._asrXHR = null;
-              if (r.status === 200) resolve(JSON.parse(r.responseText).task_id);
-              else reject(new Error("提交失败"));
+              if (r.status !== 200) return fail(`提交失败（HTTP ${r.status}）`);
+              try {
+                const id = JSON.parse(r.responseText).task_id;
+                if (id == null) return fail("任务响应缺少 task_id");
+                ok(id);
+              } catch (e) {
+                fail("解析任务响应失败");
+              }
             },
-            onerror: () => reject(new Error("无法连接本地服务")),
-            onabort: () => reject(new Error("用户取消")),
+            onerror: () => fail("无法连接本地服务"),
+            ontimeout: () => fail("提交任务超时"),
+            onabort: () => fail("用户取消"),
           });
         });
 
@@ -2326,25 +2476,77 @@
 
         // 7. 轮询进度
         const text = await new Promise((resolve, reject) => {
-          this._asrProgressTimer = setInterval(() => {
-            if (btn.dataset.running !== "1") {
+          let settled = false;
+          let inflight = false;
+          let consecutiveFailures = 0;
+          const MAX_CONSECUTIVE_FAILURES = 3;
+
+          const stopTimer = () => {
+            if (this._asrProgressTimer) {
               clearInterval(this._asrProgressTimer);
-              return reject(new Error("用户取消"));
+              this._asrProgressTimer = null;
             }
+          };
+          const finish = (fn, arg) => {
+            if (settled) return;
+            settled = true;
+            stopTimer();
+            fn(arg);
+          };
+          const ok = (t) => finish(resolve, t);
+          const fail = (e) =>
+            finish(reject, e instanceof Error ? e : new Error(e));
+
+          this._asrProgressTimer = setInterval(() => {
+            if (settled) return;
+            // 取消检查
+            if (btn.dataset.running !== "1") {
+              return fail(new Error("用户取消"));
+            }
+            // 上一次请求还没回来，跳过本轮，避免堆积
+            if (inflight) return;
+
+            inflight = true;
             GM_xmlhttpRequest({
               method: "GET",
               url: `http://127.0.0.1:8001/api/progress/${taskId}`,
+              timeout: 5000,
               onload: (r) => {
-                if (r.status !== 200) return;
-                const task = JSON.parse(r.responseText);
+                inflight = false;
+                if (settled) return;
+                if (r.status !== 200) {
+                  if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    return fail(new Error(`进度查询失败（HTTP ${r.status}）`));
+                  }
+                  return;
+                }
+                consecutiveFailures = 0;
+                let task;
+                try {
+                  task = JSON.parse(r.responseText);
+                } catch (e) {
+                  return fail(new Error("解析进度响应失败"));
+                }
                 if (task.status === "completed") {
-                  clearInterval(this._asrProgressTimer);
-                  resolve(task.text);
+                  ok(task.text);
                 } else if (task.status === "failed") {
-                  clearInterval(this._asrProgressTimer);
-                  reject(new Error(task.message || "识别失败"));
+                  fail(new Error(task.message || "识别失败"));
                 } else {
                   this.updateProgressUI(`${task.message} (${task.progress}%)`);
+                }
+              },
+              onerror: () => {
+                inflight = false;
+                if (settled) return;
+                if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                  fail(new Error("无法连接本地服务"));
+                }
+              },
+              ontimeout: () => {
+                inflight = false;
+                if (settled) return;
+                if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                  fail(new Error("进度查询超时"));
                 }
               },
             });
@@ -2784,11 +2986,15 @@
       if (m)
         return `https://www.bilibili.com/${m[1].toLowerCase()}/play/ss${m[2]}`;
       const params = new URLSearchParams(search);
+
+      // 1. 先尝试从 URL 路径里抠 BV 号（/video/BVxxx）
+      // 2. 再尝试从当前 URL 的查询字符串（也就是?后面那部分）里取出 bvid 参数的值，取不到返回 null，继续往下
+      // 3. 最后再尝试从全局状态 / getEpInfo 缓存里兜底
       const bvid =
         (pathname.match(/\/video\/(BV[0-9A-Za-z]+)/) || [])[1] ||
         params.get("bvid") ||
-        this.getInfo("bvid") ||
-        this.bvid;
+        this.getBvid();
+
       if (bvid) {
         let p = this.window && this.window.__INITIAL_STATE__?.p;
         if (!p) p = +(params.get("p") || 1);
@@ -3220,7 +3426,11 @@
           }
         } catch (e) {}
         await this.copyTextToClipboard(prompt);
-        window.open("https://chat.deepseek.com/", "_blank");
+        if (typeof GM_openInTab !== "undefined") {
+          GM_openInTab("https://chat.deepseek.com/", { active: true });
+        } else {
+          window.open("https://chat.deepseek.com/", "_blank");
+        }
         encoder.showToast(
           stored
             ? "✅ 已打开 DeepSeek，正在自动发送字幕…"
@@ -3277,7 +3487,11 @@
           }
         } catch (e) {}
         await this.copyTextToClipboard(prompt);
-        window.open("https://chat.deepseek.com/", "_blank");
+        if (typeof GM_openInTab !== "undefined") {
+          GM_openInTab("https://chat.deepseek.com/", { active: true });
+        } else {
+          window.open("https://chat.deepseek.com/", "_blank");
+        }
         encoder.showToast(
           stored
             ? "✅ 已打开 DeepSeek，正在自动发送带时间戳的字幕…"
@@ -3388,7 +3602,7 @@
         this.sendSubtitleToDeepSeekWithTimestamps(),
       );
       addItem("本地识别字幕并发送 DeepSeek", () =>
-        this.sendLocalAsrToDeepSeekClean(),
+        this.sendLocalAsrToDeepSeekClean(this.localAsrDeepseekButton),
       );
       addItem("临时关闭悬浮按钮（本页）", () =>
         this.hideFloatingButtonTemporarily(),
@@ -3415,8 +3629,8 @@
       const state = this.window.__INITIAL_STATE__ || {};
       const videoData = state.videoData || this.getInfo("videoData") || {};
       const current = {
-        bvid: this.getInfo("bvid") || this.bvid,
-        aid: this.getInfo("aid") || this.aid,
+        bvid: this.getBvid(),
+        aid: this.getAid(),
         cid: this.cid,
         ep_id: this.epid,
         title: this.getInfo("h1Title") || document.title,
@@ -3571,14 +3785,27 @@
       return result;
     },
     async fetchBatchSubtitleConfig(item) {
-      const params = [];
-      if (item.cid) params.push(`cid=${encodeURIComponent(item.cid)}`);
-      else if (item.ep_id)
-        params.push(`ep_id=${encodeURIComponent(item.ep_id)}`);
-      if (item.aid) params.push(`aid=${encodeURIComponent(item.aid)}`);
-      else if (item.bvid) params.push(`bvid=${encodeURIComponent(item.bvid)}`);
-      if (!params.length) throw "缺少视频参数";
-      const url = `https://api.bilibili.com/x/player${item.cid ? "/wbi" : ""}/v2?${params.join("&")}`;
+      const paramsObj = {};
+      if (item.cid) paramsObj.cid = String(item.cid);
+      else if (item.ep_id) paramsObj.ep_id = String(item.ep_id);
+      if (item.aid) paramsObj.aid = String(item.aid);
+      else if (item.bvid) paramsObj.bvid = String(item.bvid);
+      if (!Object.keys(paramsObj).length) throw "缺少视频参数";
+
+      // cid 场景走 WBI 签名接口；ep_id 场景保留原不签名路径
+      let url;
+      if (item.cid) {
+        const signedQuery = await this.signWbiQuery(paramsObj);
+        url = `https://api.bilibili.com/x/player/wbi/v2?${signedQuery}`;
+      } else {
+        const query = Object.entries(paramsObj)
+          .map(
+            ([k, v]) =>
+              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
+          )
+          .join("&");
+        url = `https://api.bilibili.com/x/player/v2?${query}`;
+      }
       let ret = await fetch(url, { credentials: "include" }).then((res) =>
         res.json(),
       );
@@ -3623,14 +3850,10 @@
       if (!data || !Array.isArray(data.body)) throw "字幕数据格式错误";
       return { data, language: info.lan_doc || info.lan };
     },
-    encodeBatchSubtitle(data, type) {
+    encodeBatchSubtitle(data, type, title) {
       switch (String(type).toUpperCase()) {
         case "ASS":
-          return encoder.encodeToASS(
-            data.body,
-            item.title,
-            this.getStandardVideoUrl?.() || document.location.href,
-          );
+          return encoder.encodeToASS(data.body, title); //传每集标题
         case "SRT":
           return encoder.encodeToSRT(data.body);
         case "LRC":
@@ -3784,7 +4007,7 @@
             entries.push({
               index,
               name: `${String(index + 1).padStart(2, "0")}_${this.safeBatchName(item.title)}.${extension}`,
-              content: this.encodeBatchSubtitle(result.data, type),
+              content: this.encodeBatchSubtitle(result.data, type, item.title), // ← 加 item.title
             });
           } catch (error) {
             failed.push({ index, message: `${item.title}：${error}` });
@@ -4208,6 +4431,81 @@
       }
     },
 
+    getBvid() {
+      return this.getInfo("bvid") || this.bvid;
+    },
+    getAid() {
+      return this.getInfo("aid") || this.aid;
+    },
+
+    async fetchWbiKeys() {
+      const res = await fetch("https://api.bilibili.com/x/web-interface/nav", {
+        credentials: "include",
+      });
+      if (res.status !== 200) {
+        throw new Error("nav 接口请求失败: " + res.status);
+      }
+      const data = await res.json();
+      if (!data || !data.data || !data.data.wbi_img) {
+        throw new Error("nav 接口返回异常: " + JSON.stringify(data));
+      }
+      const { img_url, sub_url } = data.data.wbi_img;
+      return {
+        img_key: img_url.slice(
+          img_url.lastIndexOf("/") + 1,
+          img_url.lastIndexOf("."),
+        ),
+        sub_key: sub_url.slice(
+          sub_url.lastIndexOf("/") + 1,
+          sub_url.lastIndexOf("."),
+        ),
+      };
+    },
+
+    _wbiKeysPromise: null, // 新增
+
+    async getWbiKeys() {
+      const now = Date.now();
+      if (this._wbiKeys && now - this._wbiKeysTime < this.WBI_KEYS_TTL) {
+        return this._wbiKeys;
+      }
+      // 已经有请求在飞，直接复用，避免并发重复请求
+      if (this._wbiKeysPromise) {
+        return this._wbiKeysPromise;
+      }
+      this._wbiKeysPromise = this.fetchWbiKeys()
+        .then((keys) => {
+          this._wbiKeys = keys;
+          this._wbiKeysTime = Date.now();
+          return keys;
+        })
+        .finally(() => {
+          this._wbiKeysPromise = null;
+        });
+      return this._wbiKeysPromise;
+    },
+
+    async signWbiQuery(params) {
+      try {
+        const keys = await this.getWbiKeys();
+        return wbiGetSignedQuery(params, keys.img_key, keys.sub_key);
+      } catch (e) {
+        console.warn("[BiliTK] WBI 签名失败，降级为不签名请求", e);
+        if (!this._wbiWarned) {
+          this._wbiWarned = true;
+          if (typeof encoder !== "undefined" && encoder.showToast) {
+            encoder.showToast("⚠️ WBI 签名失败，已降级为不签名请求", "error");
+          }
+        }
+        return Object.entries(params)
+          .map(
+            ([k, v]) =>
+              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
+          )
+          .join("&");
+      }
+    },
+
     setupData(force) {
       const currentPcid = this.getEpInfo();
       if (this.subtitle && this.pcid == currentPcid && !force)
@@ -4250,13 +4548,37 @@
           { lan: "local", lan_doc: "本地字幕" },
         ],
       };
-      if (!force) this.datas = { close: { body: [] }, local: { body: [] } };
+
+      //原本为：if (!force) this.datas = { close: { body: [] }, local: { body: [] } };
+      // 清掉在线字幕缓存（防止 force 刷新后拿到旧字幕），
+      // 但保留 close 兜底值和用户已加载的本地字幕
+      const prevLocal = this.datas?.local || { body: [] };
+      this.datas = { close: { body: [] }, local: prevLocal };
+      
       decoder.data = undefined;
 
-      const res = await fetch(
-        `https://api.bilibili.com/x/player${this.cid ? "/wbi" : ""}/v2?${this.cid ? `cid=${this.cid}` : `&ep_id=${this.epid}`}${this.aid ? `&aid=${this.aid}` : `&bvid=${this.bvid}`}`,
-        { credentials: "include" },
-      );
+      // 组装请求参数
+      const playerParams = {};
+      if (this.cid) playerParams.cid = this.cid;
+      else playerParams.ep_id = this.epid;
+      if (this.aid) playerParams.aid = this.aid;
+      else playerParams.bvid = this.bvid;
+
+      // cid 场景走 WBI 签名接口；ep_id 场景保留原不签名路径
+      let playerApiUrl;
+      if (this.cid) {
+        const signedQuery = await this.signWbiQuery(playerParams);
+        playerApiUrl = `https://api.bilibili.com/x/player/wbi/v2?${signedQuery}`;
+      } else {
+        const query = Object.entries(playerParams)
+          .map(
+            ([k, v]) =>
+              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
+          )
+          .join("&");
+        playerApiUrl = `https://api.bilibili.com/x/player/v2?${query}`;
+      }
+      const res = await fetch(playerApiUrl, { credentials: "include" });
       if (res.status != 200) throw "请求字幕配置失败:" + res.statusText;
       const ret = await res.json();
 
@@ -4359,7 +4681,7 @@
 
       new MutationObserver((mutations, observer) => {
         for (const mutation of mutations) {
-          if (!mutation.target) return;
+          if (!mutation.target) continue;
           if (
             mutation.target.getAttribute("stage") == 1 ||
             mutation.target.classList.contains("bpx-player-subtitle-wrap") ||
