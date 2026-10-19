@@ -98,8 +98,7 @@ mv model_quant.onnx model.onnx #伪装成全精度（FP32）的原始模型
 开始识别音频: /tmp/tmp3u3_p9tk.m4s.wav
 savingpot@savingpot-Katana-GF66-11UC:~/Tools/bili-tk-asr$ 
 ```
-这种情况通常发生在内存较小的机器上，或是发生在切分算法出错的时候
-如果遇到这种情况，就只能强制增加切分次数来确保负载平稳，
+这种情况通常发生在内存较小的机器上。如果遇到这种情况，就只能强制增加切分次数来确保负载平稳，
 
 可以用[云飞聊Linux 字体比windows好](https://www.bilibili.com/video/BV1hZdLYyEEA)来测试 ASR 功能。
 
@@ -116,7 +115,7 @@ savingpot@savingpot-Katana-GF66-11UC:~/Tools/bili-tk-asr$
 *   **代价**：你无法直观地看到它的运行状态，也不知道它什么时候停。
 
 ### 🔍 如果想看它在干什么，或者想关掉它，怎么办？
-既然它静默了，你需要知道这几个常用命令：
+自动启动的 server.py 是静默的。如果你希望调试它，可以这几个常用命令：
 
 **1. 看它在不在跑（状态）**
 ```bash
@@ -128,23 +127,11 @@ ps aux | grep server.py
 ```bash
 tail -f /mnt/superfast/Projects/Tools/Python/bili-tk-asr/asr.log
 ```
-按 `Ctrl+C` 退出查看。你可以用这个看看它被唤起后是不是真的加载成功了。
 
 **3. 怎么关掉它？**
-因为是静默后台，你不能按 `Ctrl+C`。最优雅的关闭方式是：
 ```bash
 pkill -f "bili-tk-asr/server.py"
 ```
-或者直接 `kill` 掉它的 PID。
-
----
-
-### ⚠️ 一个开发阶段的建议
-既然你正在调试这个体验，**建议你现在先用可见的方式测试**：
-暂时不要用 `bili-asr://start` 协议去唤起，而是**手动开一个终端，运行 `uv run server.py`**。
-等确认“唤醒协议”的提示、UI、进度条都完美跑通了，再把它丢给 `launch_asr.sh` 去静默挂载。
-
-如果你以后想给用户更好的体验，可以等这套逻辑稳定后，把 `launch_asr.sh` 改成一个**带托盘图标的 Python 程序**（比如用 `pystray` 库），这样用户右下角能看到一个小图标，右键可以随时退出，那才是桌面级软件该有的体验。
 
 
 <br>
