@@ -2,7 +2,7 @@
 
 # 这是什么
 这是一个基于油猴脚本的B站助手，主要功能是：
-- 字幕下载
+- 字幕下载（无字幕时，可退回到本地字幕识别（ASR））
 - 基于字幕的视频 AI 总结（可以选择是否带有对应时间）
 - 视频精简链接复制
 - 视频链接的 Markdown 格式复制
@@ -23,7 +23,7 @@
 <br>
 <br>
 
-## 使用方法
+## 安装方法
 ### 方法一. 手动安装（目前只支持手动安装）
 1. 安装用户脚本管理器（此处以 Tampermonkey 为例），例如 [Tampermonkey](https://www.tampermonkey.net/) 和 [Violentmonkey](https://violentmonkey.github.io/)。
 2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要先在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本。
@@ -31,6 +31,74 @@
 4. 删除编辑器中的默认内容（务必注意，是所有内容！包括注释！）
 5. 将 [BiliTk.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js) 里的文本全部复制进去。（务必注意，是全部文本，全部文本，全部文本！！！包括注释，包括注释，包括注释！！！！！！！！）
 5. 保存脚本并启用。（务必不要忘记这一步！！）
+
+
+
+## 如何接入语音模型
+
+有些视频 UP 主关闭了 CC 字幕，所以没法直接总结，那么就需要在本地进行语音转字幕。由于用户脚本的权限有限，所以需要连接外部程序，这里我使用的是 [Bili2Text](https://github.com/lanbinleo/bili2text)，因此需要配置 Python环境
+
+### 配置 UV
+
+首先需要检查是否有 uv（Python 的一种 Rust 重写的高效包管理器）。如果没有的话，运行以下指令来运行官方的安装脚本（注意：这一步可能很慢，所以尽量挂梯子，或使用镜像源）：
+
+#### Linux 用户
+```bash
+wget -qO- https://astral.sh/uv/install.sh | sh
+
+#或 curl -LsSf https://astral.sh/uv/install.sh | sh
+#或镜像源 curl -LsSf https://gitee.com/wangnov/uv-custom/releases/download/0.9.22/uv-installer-custom.sh | sh
+```
+
+#### Windows 用户
+
+还没写
+
+
+### 配置 bili-tk-asr
+
+
+先找到一个地方用来放置 asr 脚本，在那里打开终端
+```bash
+# 1. 克隆库
+git clone https://github.com/SavingPot/bili-tk-asr.git
+
+# 2. 进入目录
+cd bili-tk-asr
+
+# 3. 创建干净的 Python 3.12 虚拟环境
+uv venv --python 3.12
+source .venv/bin/activate
+
+# 4. 安装库
+uv pip install fastapi uvicorn python-multipart funasr_onnx modelscope
+
+# 💡 如果 funasr_onnx 报 BaseException 错误，直接强制覆盖为修复版：
+# uv pip install --force-reinstall --no-deps "git+https://github.com/modelscope/FunASR.git#subdirectory=runtime/python/onnxruntime"
+
+# 5. 安装 asr 模型（这一步需要梯子）
+mkdir -p SenseVoiceSmall-onnx
+cd SenseVoiceSmall-onnx
+wget -O model_quant.onnx \
+  https://huggingface.co/DennisHuang648/SenseVoiceSmall-onnx/resolve/main/model_quant.onnx
+wget -O chn_jpn_yue_eng_ko_spectok.bpe.model \
+  https://huggingface.co/FunAudioLLM/SenseVoiceSmall/resolve/main/chn_jpn_yue_eng_ko_spectok.bpe.model
+wget -O config.yaml \
+  https://huggingface.co/DennisHuang648/SenseVoiceSmall-onnx/resolve/main/config.yaml
+wget -O tokens.json \
+  https://huggingface.co/DennisHuang648/SenseVoiceSmall-onnx/resolve/main/tokens.json
+wget https://hf-mirror.com/FunAudioLLM/SenseVoiceSmall/resolve/main/am.mvn -P SenseVoiceSmall-onnx/
+mv model_quant.onnx model.onnx #伪装成全精度（FP32）的原始模型
+```
+
+使用 `uv run server.py` 来启动 ASR 服务器
+
+<br>
+<br>
+
+## 使用方法
+
+打开任意一个 B 站视频，就可以使用右上角的按钮了！
 
 <br>
 <br>

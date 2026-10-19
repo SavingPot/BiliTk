@@ -3,7 +3,7 @@
 // @namespace    https://github.com/SavingPot/BiliTk
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      1.4.0
+// @version      1.5.1
 // @description  详细介绍见 https://github.com/SavingPot/BiliTk
 // @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
@@ -24,15 +24,208 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        unsafeWindow
+// @grant        GM_cookie
+// @grant        GM_xmlhttpRequest
+// @connect      bilibili.com
+// @connect      127.0.0.1
 // ==/UserScript==
+
+async function getBilibiliCookieString() {
+  return new Promise((resolve) => {
+    if (typeof GM_cookie === "undefined") {
+      return resolve(null); // 管理器不支持 GM_cookie
+    }
+    GM_cookie.list({ domain: ".bilibili.com" }, (cookies, error) => {
+      if (error || !cookies || !cookies.length) return resolve(null);
+      const str = cookies
+        .filter((c) => ["SESSDATA", "bili_jct", "DedeUserID"].includes(c.name))
+        .map((c) => `${c.name}=${c.value}`)
+        .join("; ");
+      resolve(str || null);
+    });
+  });
+}
+
+function transcribeViaBili2text(videoUrl, cookieStr) {
+  return new Promise((resolve, reject) => {
+    const payload = {
+      source: videoUrl,
+      provider: "sensevoice",
+      model: "small",
+      prompt: "",
+      cookie: cookieStr || "", // 传 undefined 时会自动省略
+    };
+
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: "http://127.0.0.1:8000/api/transcribe",
+      headers: { "Content-Type": "application/json" },
+      data: JSON.stringify(payload),
+      timeout: 1800000, // 30 分钟，SenseVoice 长视频可能需要
+      onload: (resp) => {
+        try {
+          const data = JSON.parse(resp.responseText);
+          if (resp.status === 200 && data.text) resolve(data);
+          else reject(new Error(data.error || `HTTP ${resp.status}`));
+        } catch (e) {
+          reject(new Error("解析本地服务响应失败"));
+        }
+      },
+      onerror: () =>
+        reject(
+          new Error(
+            "无法连接本地 bili2text 服务，请确认已运行 `bili2text srv`",
+          ),
+        ),
+      ontimeout: () => reject(new Error("本地识别超时")),
+    });
+  });
+}
+
+function wrapAsSubtitleBody(text) {
+  return {
+    body: text
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line, i) => ({
+        from: i * 3,
+        to: i * 3 + 3,
+        content: line.trim(),
+      })),
+  };
+}
+
+async function submitTranscribeTaskWithCookie(videoUrl) {
+  // 1. 获取B站Cookie (需要GM_cookie权限)
+  const cookieString = await new Promise((resolve) => {
+    if (typeof GM_cookie === "undefined") {
+      console.warn("GM_cookie不可用，无法自动获取Cookie");
+      return resolve("");
+    }
+    GM_cookie.list({ domain: ".bilibili.com" }, (cookies, error) => {
+      if (error || !cookies) return resolve("");
+      // 将Cookie对象数组转换为 "name=value; name2=value2" 的字符串格式
+      resolve(cookies.map((c) => `${c.name}=${c.value}`).join("; "));
+    });
+  });
+
+  // 2. 构建请求数据
+  const payload = {
+    source: videoUrl,
+    provider: "sensevoice",
+    model: "small",
+    prompt: "",
+    cookie: cookieString, // <-- 关键：将Cookie字符串放入请求体
+  };
+
+  // 3. 发送请求
+  GM_xmlhttpRequest({
+    method: "POST",
+    url: "http://127.0.0.1:8000/api/tasks/transcribe",
+    headers: { "Content-Type": "application/json" },
+    data: JSON.stringify(payload),
+    onload: (resp) => {
+      /* 处理响应 */
+    },
+    onerror: (err) => {
+      /* 处理错误 */
+    },
+  });
+}
+
+async function submitTranscribe(videoUrl) {
+  const cookieString = await new Promise((resolve) => {
+    if (typeof GM_cookie === "undefined") return resolve("");
+    GM_cookie.list({ domain: ".bilibili.com" }, (cookies, err) => {
+      if (err || !cookies) return resolve("");
+      resolve(cookies.map((c) => `${c.name}=${c.value}`).join("; "));
+    });
+  });
+
+  return new Promise((resolve, reject) => {
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: "http://127.0.0.1:8000/api/tasks/transcribe",
+      headers: { "Content-Type": "application/json" },
+      data: JSON.stringify({
+        source: videoUrl,
+        provider: "sensevoice",
+        model: "small",
+        prompt: "",
+        cookie: cookieString,
+      }),
+      onload: (r) => resolve(JSON.parse(r.responseText)),
+      onerror: () => reject(new Error("无法连接本地服务")),
+    });
+  });
+}
 
 (function () {
   "use strict";
+
+  // 1. 获取当前视频的音频流 URL (B站 DASH 格式)
+  function getBilibiliAudioUrl() {
+    // 尝试从页面的初始状态中获取
+    if (
+      window.__playinfo__ &&
+      window.__playinfo__.data &&
+      window.__playinfo__.data.dash
+    ) {
+      const audios = window.__playinfo__.data.dash.audio;
+      if (audios && audios.length > 0) {
+        // 通常取最高音质的第一个
+        return audios[0].baseUrl || audios[0].base_url;
+      }
+    }
+    throw new Error("未找到音频流地址，可能页面未完全加载");
+  }
+
+  // 2. 下载音频并发送给本地服务器
+  async function sendAudioToLocalServer(videoUrl) {
+    try {
+      const audioUrl = getBilibiliAudioUrl();
+      encoder.showToast("正在下载音频流…");
+
+      // 浏览器带 Cookie 直接请求音频流
+      const response = await fetch(audioUrl);
+      if (!response.ok) throw new Error("音频流下载失败");
+      const audioBlob = await response.blob();
+
+      encoder.showToast("正在发送给本地服务识别…");
+
+      // 构造 FormData 发送给本地
+      const formData = new FormData();
+      // 这里的 .m4s 后缀是告诉后端它是视频容器里的音频
+      formData.append("file", audioBlob, "audio.m4s");
+
+      // 发给本地服务
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: "http://127.0.0.1:8001/api/transcribe", // 用新的端口
+        data: formData,
+        onload: (resp) => {
+          if (resp.status === 200) {
+            const data = JSON.parse(resp.responseText);
+            encoder.showToast("✅ 本地识别成功");
+            // 拿到 data.text 后去发 DeepSeek
+            console.log("识别结果:", data.text);
+          } else {
+            encoder.showToast(`❌ 识别失败: ${resp.responseText}`, "error");
+          }
+        },
+        onerror: () => encoder.showToast("无法连接本地识别服务", "error"),
+      });
+    } catch (e) {
+      console.error(e);
+      encoder.showToast(`❌ ${e.message}`, "error");
+    }
+  }
 
   // ================================================================
   // DeepSeek 页面侧：接收 B 站传来的字幕并【模拟用户】填入发送
   // ================================================================
   const DS_STORAGE_KEY = "bilitk_deepseek_pending_v1";
+  const LOCAL_ASR_ENDPOINT = "http://127.0.0.1:8000/api/tasks/transcribe";
 
   function handleDeepSeekPage() {
     let pending = null;
@@ -2344,6 +2537,337 @@
       );
     },
 
+    // 1. 提交任务，返回 task_id
+    submitLocalAsrTask(videoUrl, cookieStr) {
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: "POST",
+          url: LOCAL_ASR_ENDPOINT,
+          headers: { "Content-Type": "application/json" },
+          data: JSON.stringify({
+            source: videoUrl,
+            provider: "sensevoice",
+            model: "small",
+            prompt: "",
+            cookie: cookieStr || "",
+          }),
+          timeout: 30000,
+          onload: (resp) => {
+            try {
+              const data = JSON.parse(resp.responseText);
+              if (resp.status === 200 && data.task_id) resolve(data.task_id);
+              else
+                reject(
+                  new Error(data.detail || data.error || `HTTP ${resp.status}`),
+                );
+            } catch (e) {
+              reject(new Error("解析提交响应失败"));
+            }
+          },
+          onerror: () =>
+            reject(
+              new Error("无法连接本地 bili2text，请确认已运行 `bili2text srv`"),
+            ),
+          ontimeout: () => reject(new Error("提交任务超时")),
+        });
+      });
+    },
+
+    // 2. 轮询直到 completed / failed / cancelled
+    pollLocalAsrTask(taskId, onProgress) {
+      return new Promise((resolve, reject) => {
+        const timer = setInterval(() => {
+          GM_xmlhttpRequest({
+            method: "GET",
+            url: `http://127.0.0.1:8000/api/tasks/${taskId}/progress`,
+            onload: (resp) => {
+              if (resp.status !== 200) return; // 临时错误忽略，继续轮询
+              let task;
+              try {
+                task = JSON.parse(resp.responseText);
+              } catch (e) {
+                return;
+              }
+              if (onProgress) onProgress(task);
+              if (task.status === "completed") {
+                clearInterval(timer);
+                resolve(task);
+              } else if (
+                task.status === "failed" ||
+                task.status === "cancelled"
+              ) {
+                clearInterval(timer);
+                reject(
+                  new Error(
+                    task.error_message ||
+                      task.current_message ||
+                      "本地识别失败",
+                  ),
+                );
+              }
+            },
+          });
+        }, 2000);
+      });
+    },
+
+    // 3. 取 transcript
+    fetchLocalAsrTranscript(taskId) {
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: `http://127.0.0.1:8000/api/tasks/${taskId}/transcript`,
+          onload: (resp) => {
+            try {
+              const data = JSON.parse(resp.responseText);
+              if (resp.status === 200) resolve(data);
+              else reject(new Error(data.detail || `HTTP ${resp.status}`));
+            } catch (e) {
+              reject(new Error("解析 transcript 响应失败"));
+            }
+          },
+          onerror: () => reject(new Error("获取 transcript 失败")),
+        });
+      });
+    },
+
+    // 把三步串起来，对外仍然叫 transcribeViaBili2text
+    async transcribeViaBili2text(videoUrl, cookieStr) {
+      const taskId = await this.submitLocalAsrTask(videoUrl, cookieStr);
+      encoder.showToast("本地识别中，请稍候…");
+      await this.pollLocalAsrTask(taskId);
+      const transcript = await this.fetchLocalAsrTranscript(taskId);
+      return transcript;
+    },
+
+    extractTranscriptText(data) {
+      if (!data) return "";
+      if (typeof data === "string") return data;
+      for (const key of ["text", "content", "body", "transcript"]) {
+        const v = data[key];
+        if (typeof v === "string") return v;
+        if (Array.isArray(v)) {
+          return v
+            .map((x) => (x && (x.content || x.text)) || "")
+            .filter(Boolean)
+            .join("\n");
+        }
+      }
+      return "";
+    },
+
+    async sendLocalAsrToDeepSeekClean(btn) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+
+      // 【新增】立刻打开一个空白标签页，防止被浏览器拦截
+      const dsWindow = window.open("about:blank", "_blank");
+
+      try {
+        encoder.showToast("正在获取音频流…");
+
+        // 1. 获取视频 bvid 和 cid
+        let bvid = this.getInfo("bvid") || this.bvid;
+        let cid = this.cid;
+
+        const win = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+        // 兼容分P视频的 cid 提取
+        if (!cid && win.__INITIAL_STATE__?.videoData?.pages) {
+          const p = win.__INITIAL_STATE__?.p || 1;
+          cid = win.__INITIAL_STATE__.videoData.pages[p - 1].cid;
+        }
+        if (!bvid || !cid) throw "无法获取视频信息(bvid/cid)，请刷新页面";
+
+        // 2. 请求 API 获取音频流
+        // 使用当前页面的 fetch，它会自动带上 B 站的 Cookie
+        const apiUrl = `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&fnval=16`;
+        const playurlResp = await fetch(apiUrl);
+        const playurlData = await playurlResp.json();
+
+        let audioUrl = "";
+        if (
+          playurlData.code === 0 &&
+          playurlData.data &&
+          playurlData.data.dash
+        ) {
+          const audios = playurlData.data.dash.audio;
+          if (audios && audios.length > 0) {
+            audioUrl = audios[0].baseUrl || audios[0].base_url;
+          }
+        }
+
+        // 如果 API 还是没拿到，尝试最后的兜底
+        if (!audioUrl && win.__playinfo__?.data?.dash?.audio) {
+          audioUrl = win.__playinfo__.data.dash.audio[0].baseUrl;
+        }
+
+        if (!audioUrl) throw "解析音频流失败，可能是特殊视频或接口变动";
+
+        // 3. 下载音频 Blob (绕过脚本内被覆盖的 fetch，使用原生方法)
+        encoder.showToast("正在下载音频（需等待几秒）…");
+
+        let audioBlob;
+        try {
+          // 尝试使用页面的原生 fetch
+          const nativeFetch =
+            typeof unsafeWindow !== "undefined" && unsafeWindow.fetch
+              ? unsafeWindow.fetch
+              : window.fetch;
+          const resp = await nativeFetch(audioUrl);
+          audioBlob = await resp.blob();
+        } catch (e) {
+          // 如果 fetch 失败，用原生 XHR 兜底
+          audioBlob = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("GET", audioUrl);
+            xhr.responseType = "blob";
+            xhr.onload = () => {
+              if (xhr.status === 200) resolve(xhr.response);
+              else reject(new Error("XHR 下载音频失败"));
+            };
+            xhr.onerror = () => reject(new Error("网络错误，下载音频失败"));
+            xhr.send();
+          });
+        }
+
+        // 4. 发送给本地 8001 服务
+        encoder.showToast("发送给本地识别中…");
+        const formData = new FormData();
+        formData.append("file", audioBlob, "audio.m4s");
+
+        const text = await new Promise((resolve, reject) => {
+          GM_xmlhttpRequest({
+            method: "POST",
+            url: "http://127.0.0.1:8001/api/transcribe",
+            data: formData,
+            timeout: 600000, // 10分钟超时
+            onload: (r) => {
+              if (r.status === 200) {
+                const data = JSON.parse(r.responseText);
+                resolve(data.text);
+              } else {
+                reject(new Error(r.responseText || "识别失败"));
+              }
+            },
+            onerror: () => reject(new Error("无法连接本地 8001 服务")),
+            ontimeout: () => reject(new Error("识别超时")),
+          });
+        });
+
+        if (!text || !text.trim()) throw "识别结果为空";
+
+        // 5. 组装 Prompt 并发送 DeepSeek
+        const title = this.getCleanTitle();
+        const prompt =
+          this.OBSIDIAN_SKILL_PROMPT +
+          `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n` +
+          `视频标题：${title}\n` +
+          `字幕来源：纯本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n\n` +
+          text;
+
+        let stored = false;
+        try {
+          if (typeof GM_setValue === "function") {
+            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
+            stored = true;
+          }
+        } catch (e) {}
+
+        await this.copyTextToClipboard(prompt);
+        await this.copyTextToClipboard(prompt);
+
+        // 【修改】让刚才打开的空白页跳转到 DeepSeek
+        if (dsWindow) {
+          dsWindow.location.href = "https://chat.deepseek.com/";
+        } else {
+          encoder.showToast("⚠️ 弹窗被拦截，内容已复制，请手动打开 DeepSeek");
+        }
+
+        encoder.showToast(
+          stored ? "✅ 已跳转 DeepSeek 自动发送…" : "✅ 已复制，请手动粘贴发送",
+        );
+
+        encoder.showToast(
+          stored ? "✅ 已打开 DeepSeek 自动发送…" : "✅ 已复制，请手动粘贴发送",
+        );
+      } catch (e) {
+        console.error("纯本地识别失败", e);
+        encoder.showToast(`❌ 失败：${e.message || e}`, "error");
+        // 【新增】出错了就把空白页关掉
+        if (dsWindow) dsWindow.close();
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
+    // 本地识别 → 组装 prompt → 写入 GM 存储 → 打开 DeepSeek
+    async sendLocalAsrToDeepSeek(btn) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+      try {
+        encoder.showToast("正在请求本地识别，首次使用可能需加载模型…");
+
+        const videoUrl = this.getStandardVideoUrl();
+        if (!videoUrl) throw "无法获取视频链接";
+
+        const cookieStr = await this.getBilibiliCookieString();
+        const transcript = await this.transcribeViaBili2text(
+          videoUrl,
+          cookieStr,
+        );
+        const text = this.extractTranscriptText(transcript);
+        if (!text || !text.trim())
+          throw "本地识别结果为空（transcript 字段名可能不匹配，请用 curl 确认）";
+
+        const title = this.getCleanTitle();
+
+        // 复用现有的 Obsidian 整理提示词（纯文本版本，不带时间戳）
+        const prompt =
+          this.OBSIDIAN_SKILL_PROMPT +
+          `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n` +
+          `视频标题：${title}\n` +
+          `字幕来源：本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n` +
+          `字幕条数：${text.split("\n").filter((l) => l.trim()).length}\n\n` +
+          text;
+
+        let stored = false;
+        try {
+          if (typeof GM_setValue === "function") {
+            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
+            stored = true;
+          }
+        } catch (e) {
+          console.error("[BiliTK] 写入 GM 存储失败", e);
+        }
+
+        // 兜底：同时复制一份到剪贴板
+        await this.copyTextToClipboard(prompt);
+
+        window.open("https://chat.deepseek.com/", "_blank");
+
+        encoder.showToast(
+          stored
+            ? "✅ 本地识别完成，已打开 DeepSeek 自动发送…"
+            : "✅ 已复制识别结果并打开 DeepSeek，请粘贴发送",
+        );
+      } catch (e) {
+        console.error("本地识别并发送 DeepSeek 失败", e);
+        encoder.showToast(`❌ ${e.message || e}`, "error");
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
     // =========================================================
     // 【需求 1/2/3】悬浮按钮群：
     //   ① 字幕批量下载（原 ⭐ 按钮，变量名 floatButton → subtitleBatchButton）
@@ -2385,6 +2909,21 @@
         document.body,
       );
 
+      // 禁用状态样式：灰度 + 降透明度 + 禁止 hover 放大
+      if (!document.getElementById("cc-float-btn-style")) {
+        elements.createAs(
+          "style",
+          {
+            id: "cc-float-btn-style",
+            innerHTML:
+              "#cc-subtitle-float-container>div{transition:transform .15s,box-shadow .15s,opacity .2s,filter .2s;}" +
+              "#cc-subtitle-float-container>div.cc-float-btn-disabled{opacity:.38!important;filter:grayscale(1)!important;cursor:not-allowed!important;box-shadow:0 2px 6px rgba(0,0,0,.15)!important;}" +
+              "#cc-subtitle-float-container>div.cc-float-btn-disabled:hover{transform:none!important;box-shadow:0 2px 6px rgba(0,0,0,.15)!important;}",
+          },
+          document.head,
+        );
+      }
+
       // 【需求 1】字幕批量下载（原 ⭐ 按钮）
       this.subtitleBatchButton = elements.createAs(
         "div",
@@ -2413,9 +2952,9 @@
             this.style.transform = "scale(1)";
             this.style.boxShadow = "0 4px 14px rgba(0,161,214,0.35)";
           },
-          onclick: function () {
+          onclick: self.guardSubtitleAction(function () {
             self.openDownloadDialog();
-          },
+          }),
           oncontextmenu: function (e) {
             e.preventDefault();
             e.stopPropagation();
@@ -2453,9 +2992,9 @@
             this.style.transform = "scale(1)";
             this.style.boxShadow = "0 4px 14px rgba(32,178,107,0.35)";
           },
-          onclick: function () {
+          onclick: self.guardSubtitleAction(function () {
             self.copyCurrentSubtitleSRT(this);
-          },
+          }),
         },
         this.floatButtonContainer,
       );
@@ -2558,9 +3097,9 @@
             this.style.transform = "scale(1)";
             this.style.boxShadow = "0 4px 14px rgba(77,107,254,0.35)";
           },
-          onclick: function () {
+          onclick: self.guardSubtitleAction(function () {
             self.sendSubtitleToDeepSeek(this);
-          },
+          }),
         },
         this.floatButtonContainer,
       );
@@ -2595,14 +3134,115 @@
             this.style.transform = "scale(1)";
             this.style.boxShadow = "0 4px 14px rgba(43,60,201,0.4)";
           },
-          onclick: function () {
+          onclick: self.guardSubtitleAction(function () {
             self.sendSubtitleToDeepSeekWithTimestamps(this);
+          }),
+        },
+        this.floatButtonContainer,
+      );
+
+      // 本地识别字幕 → 发送到 DeepSeek
+      this.localAsrDeepseekButton = elements.createAs(
+        "div",
+        {
+          id: "cc-subtitle-local-asr-deepseek-trigger",
+          style:
+            "width:44px;height:44px;background:linear-gradient(135deg,#2e7d32,#43a047);" +
+            "border-radius:12px;box-shadow:0 4px 14px rgba(46,125,50,0.4);cursor:pointer;" +
+            "display:flex;align-items:center;justify-content:center;color:#fff;" +
+            "position:relative;" +
+            "user-select:none;-webkit-tap-highlight-color:transparent;" +
+            "transition:transform .15s, box-shadow .15s;",
+          innerHTML:
+            this.DEEPSEEK_WHALE_SVG +
+            // 右下角小徽标：绿色"本地"字样，表示走本地 ASR
+            '<span style="position:absolute;bottom:1px;right:2px;' +
+            "font-size:8px;font-weight:700;line-height:11px;" +
+            "background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;" +
+            'box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>',
+          title:
+            "用本地 SenseVoice 识别字幕，然后发送给 DeepSeek 整理成笔记\n" +
+            "（需要先在本地运行 bili2text srv）",
+          onmouseenter: function () {
+            this.style.transform = "scale(1.1)";
+            this.style.boxShadow = "0 6px 20px rgba(46,125,50,0.6)";
+          },
+          onmouseleave: function () {
+            this.style.transform = "scale(1)";
+            this.style.boxShadow = "0 4px 14px rgba(46,125,50,0.4)";
+          },
+          onclick: function () {
+            self.sendLocalAsrToDeepSeekClean(this); // 改成调用 Clean 版本
           },
         },
         this.floatButtonContainer,
       );
 
       this.applyFloatingButtonVisibility();
+      // 首次创建时用当前已知的 subtitle 初始化按钮状态
+      // （init 时 subtitle 通常是 undefined，此时方法内部直接 return，保持默认可点）
+      this.updateFloatButtonsAvailability(this.subtitle);
+    },
+
+    // =========================================================
+    // 字幕相关按钮的可用性联动
+    // =========================================================
+
+    // 从 subtitle 配置里判断是否有可用的在线字幕
+    hasAvailableSubtitle(subtitle) {
+      if (!subtitle || !Array.isArray(subtitle.subtitles)) return false;
+      return subtitle.subtitles.some(
+        (item) => item.lan !== "close" && item.lan !== "local",
+      );
+    },
+
+    // 包装依赖字幕的点击：禁用时只 toast，不执行原逻辑
+    guardSubtitleAction(handler) {
+      return function (ev) {
+        if (this.dataset.disabled === "1") {
+          ev && ev.stopPropagation && ev.stopPropagation();
+          if (typeof encoder !== "undefined" && encoder.showToast) {
+            encoder.showToast("当前视频没有可用字幕", "error");
+          }
+          return;
+        }
+        return handler.call(this, ev);
+      };
+    },
+
+    // 根据字幕配置更新四个按钮的可用状态
+    updateFloatButtonsAvailability(subtitle) {
+      // 还没拿到配置（页面刚加载 / setupData 返回 undefined）时不改状态
+      if (!subtitle) return;
+      const hasSubtitle = this.hasAvailableSubtitle(subtitle);
+      const buttons = [
+        this.subtitleBatchButton,
+        this.copyFloatButton,
+        this.deepseekFloatButton,
+        this.deepseekTimestampButton,
+      ].filter(Boolean);
+
+      buttons.forEach((btn) => {
+        // 首次进入时把原始 title 存起来，之后恢复用
+        if (!btn.dataset.originalTitle) {
+          btn.dataset.originalTitle = btn.title || "";
+        }
+        if (hasSubtitle) {
+          btn.classList.remove("cc-float-btn-disabled");
+          btn.style.opacity = "";
+          btn.style.filter = "";
+          btn.style.cursor = "";
+          btn.dataset.disabled = "0";
+          btn.title = btn.dataset.originalTitle;
+        } else {
+          btn.classList.add("cc-float-btn-disabled");
+          btn.style.opacity = "0.38";
+          btn.style.filter = "grayscale(1)";
+          btn.style.cursor = "not-allowed";
+          btn.dataset.disabled = "1";
+          btn.title = "当前视频没有可用字幕";
+        }
+      });
     },
 
     // 【改进】检测"网页全屏"或"浏览器全屏"是否处于激活状态。
@@ -3413,10 +4053,13 @@
         this.hideFloatingButtonTemporarily(),
       );
       addItem("永久关闭悬浮按钮", () => this.hideFloatingButtonPermanently());
+      addItem("本地识别字幕并发送 DeepSeek", () =>
+        this.sendLocalAsrToDeepSeek(),
+      );
 
       const width = 210;
       // 菜单项增加到 9 个，高度同步调整
-      const height = 122 + 36 * 3;
+      const height = 122 + 36 * 4;
       menu.style.left =
         Math.max(8, Math.min(x, window.innerWidth - width - 8)) + "px";
       menu.style.top =
@@ -4348,6 +4991,7 @@
       this._initDebounce = setTimeout(() => {
         this.setupData()
           .then((subtitle) => {
+            this.updateFloatButtonsAvailability(subtitle);
             if (!subtitle) return;
             if (elements.getAs("#bilibili-player-subtitle-btn")) {
               console.log("CC助手已初始化");
