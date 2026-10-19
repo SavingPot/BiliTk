@@ -34,9 +34,9 @@
 
 
 
-## 2. ASR 功能（语音模型）的安装
+## 2. （可选）ASR 功能（语音模型）的安装
 
-有些视频 UP 主关闭了 CC 字幕，所以没法直接总结，那么就需要在本地进行语音转字幕。由于用户脚本的权限有限，所以需要连接外部程序，这里我使用的是 [Bili2Text](https://github.com/lanbinleo/bili2text)，因此需要配置 Python环境
+有些视频 UP 主关闭了 CC 字幕，所以没法直接总结，那么就需要在本地进行语音转字幕。由于用户脚本的权限有限，所以需要连接外部程序，这里我使用的是 [Bili2Text](https://github.com/SavingPot/bili-tk-asr)，因此需要配置 Python 环境
 
 ### ①配置 UV
 
