@@ -61,10 +61,12 @@
     let attempts = 0;
     const MAX_ATTEMPTS = 60; // 约 30 秒
     let timer = null;
+    let tryTimer = null;
 
     const cleanup = () => {
       done = true;
       if (timer) clearInterval(timer);
+      if (tryTimer) clearTimeout(tryTimer);
       try {
         GM_deleteValue(DS_STORAGE_KEY);
       } catch (e) {}
@@ -225,8 +227,6 @@
           "[BiliTK→DS] 输入框是空的，DeepSeek 可能换了输入框结构",
           input,
         );
-        // 可选：encoder.showToast("⚠️ DeepSeek 输入框结构变化，自动发送可能失效", "error")
-        // 但 DeepSeek 页面没有 encoder，可以换成 alert 或页面上插个提示条
       }
 
       setTimeout(() => {
@@ -236,7 +236,7 @@
     };
 
     timer = setInterval(tryInject, 500);
-    setTimeout(tryInject, 1200);
+    tryTimer = setTimeout(tryInject, 1200);
   }
 
   // 当前在 DeepSeek 页面 → 只跑注入逻辑，直接退出
@@ -617,8 +617,45 @@
     formatSelect: null,
     resizeContainer: null,
 
+    // 统一清理下载窗口：移除 document 监听器、释放 Blob URL、清空引用
+    _cleanupDialog() {
+      if (typeof this._destroyDrag === "function") {
+        this._destroyDrag();
+        this._destroyDrag = null;
+      }
+      if (typeof this._destroyResize === "function") {
+        this._destroyResize();
+        this._destroyResize = null;
+      }
+      [this.actionButton, this.openTabButton].forEach((el) => {
+        if (el && el.href && el.href.startsWith("blob:")) {
+          URL.revokeObjectURL(el.href);
+          el.href = "";
+        }
+      });
+      const dialog = this.dialogElement;
+      if (dialog && dialog.isConnected) dialog.remove();
+      this.dialogElement = null;
+      this.panelElement = null;
+      this.resizeContainer = null;
+      this.textArea = null;
+      this.languageSelect = null;
+      this.languageStatus = null;
+      this.formatSelect = null;
+      this.actionButton = null;
+      this.openTabButton = null;
+      this.batchButton = null;
+      this.copyButton = null;
+      this.closeButton = null;
+      this.refreshButton = null;
+    },
+
     showDialog(data, download, lan) {
       if (!data || !(data.body instanceof Array)) throw "数据错误";
+
+      // 若上一次窗口未关闭，先彻底清理，避免监听器和 Blob URL 累积
+      this._cleanupDialog();
+
       this.data = data;
       this.currentLan = lan || null;
       const settingDiv = elements.createAs(
@@ -708,7 +745,11 @@
           resizeContainer,
         );
       textArea.setAttribute("readonly", true);
-      this.initTextAreaResize(resizeHandle, resizeContainer, panel);
+      this._destroyResize = this.initTextAreaResize(
+        resizeHandle,
+        resizeContainer,
+        panel,
+      );
 
       const availableLanguages =
         this.currentLan && typeof bilibiliCCHelper !== "undefined"
@@ -846,11 +887,7 @@
           style:
             "height: 24px;margin-right: 5px;background: #00a1d6;color: #fff;padding: 7px;cursor: pointer;",
           onclick: () => {
-            if (typeof this._destroyDrag === "function") {
-              this._destroyDrag();
-              this._destroyDrag = null;
-            }
-            document.body.removeChild(settingDiv);
+            this._cleanupDialog();
           },
         },
         bottomPanel,
@@ -931,7 +968,7 @@
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
       };
-      handle.addEventListener("mousedown", (e) => {
+      const onDown = (e) => {
         e.preventDefault();
         e.stopPropagation();
         const rect = container.getBoundingClientRect();
@@ -943,7 +980,16 @@
         handle.classList.add("active");
         document.addEventListener("mousemove", onMove);
         document.addEventListener("mouseup", onUp);
-      });
+      };
+      handle.addEventListener("mousedown", onDown);
+      // 返回 destroy 函数，关闭窗口时可清理未完成的拖拽监听器
+      return function destroy() {
+        resizing = false;
+        handle.classList.remove("active");
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        handle.removeEventListener("mousedown", onDown);
+      };
     },
 
     initDragging(handle, container) {
@@ -992,6 +1038,7 @@
     },
 
     copyToClipboard() {
+      if (!this.textArea) return;
       const text = this.textArea.value;
       if (!text || text.length === 0) {
         this.showToast("没有可复制的内容！", "error");
@@ -1074,6 +1121,8 @@
     },
 
     updateDownload(type = "LRC", download) {
+      // 窗口已被关闭（异步回调可能晚到），直接忽略
+      if (!this.textArea || !this.actionButton || !this.openTabButton) return;
       let result;
       let blobResult;
       switch (type) {
@@ -1102,7 +1151,13 @@
       this.textArea.value = result;
       localStorage.defaultSubtitleType = type;
       type = type.toLowerCase();
-      URL.revokeObjectURL(this.actionButton.href);
+      // 同时释放 actionButton 与 openTabButton 的旧 Blob URL，避免每次切换格式泄漏
+      [this.actionButton, this.openTabButton].forEach((el) => {
+        if (el && el.href && el.href.startsWith("blob:")) {
+          URL.revokeObjectURL(el.href);
+          el.href = "";
+        }
+      });
       this.actionButton.classList.remove(
         "bpui-state-disabled",
         "bui-button-disabled",
@@ -1114,8 +1169,13 @@
       this.openTabButton.href = URL.createObjectURL(blobResult);
       this.actionButton.download = `${bilibiliCCHelper.getInfo("h1Title") || document.title}.${type}`;
       if (download) {
+        const url = this.actionButton.href;
         this.actionButton.click();
-        this.closeButton.click();
+        // 给浏览器留出真正开始下载的时间，再释放 Blob URL 并关闭窗口
+        setTimeout(() => {
+          if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
+          if (this.closeButton) this.closeButton.click();
+        }, 1500);
       }
     },
     encodeToLRC(data) {
@@ -2222,6 +2282,8 @@
     floatButton: null,
     floatButtonHiddenThisPage: false,
     floatButtonPrefKey: "bilibili_cc_float_button_hidden_v1",
+    // 缓存悬浮按钮的全局显示状态，避免高频 MutationObserver 反复读 localStorage
+    _floatBtnHiddenPref: null,
 
     // 用于控制取消状态
     _asrAbortController: null,
@@ -2586,6 +2648,7 @@
         }
       } finally {
         this._currentTaskId = null;
+        this._asrAbortController = null;
         if (btn) {
           btn.dataset.running = "0";
           btn.innerHTML =
@@ -2908,25 +2971,35 @@
       return false;
     },
 
+    // 缓存全局开关，避免每帧读取 localStorage
+    getFloatingButtonHiddenPref() {
+      if (this._floatBtnHiddenPref === null) {
+        const state = uiManager.loadState(this.floatButtonPrefKey, {
+          hidden: false,
+        });
+        this._floatBtnHiddenPref = !!state.hidden;
+      }
+      return this._floatBtnHiddenPref;
+    },
+    setFloatingButtonHiddenPref(hidden) {
+      this._floatBtnHiddenPref = !!hidden;
+      uiManager.saveState(this.floatButtonPrefKey, { hidden: !!hidden });
+    },
+
     applyFloatingButtonVisibility() {
       if (!this.floatButtonContainer) return;
-      const state = uiManager.loadState(this.floatButtonPrefKey, {
-        hidden: false,
-      });
       const hidden =
         this.floatButtonHiddenThisPage ||
-        state.hidden ||
+        this.getFloatingButtonHiddenPref() ||
         this.isWebFullscreen();
       this.floatButtonContainer.style.display = hidden ? "none" : "flex";
     },
     toggleFloatingButtonGlobal() {
-      const state = uiManager.loadState(this.floatButtonPrefKey, {
-        hidden: false,
-      });
-      uiManager.saveState(this.floatButtonPrefKey, { hidden: !state.hidden });
+      const nextHidden = !this.getFloatingButtonHiddenPref();
+      this.setFloatingButtonHiddenPref(nextHidden);
       this.floatButtonHiddenThisPage = false;
       this.applyFloatingButtonVisibility();
-      this.toast(state.hidden ? "悬浮按钮已打开" : "悬浮按钮已关闭");
+      this.toast(nextHidden ? "悬浮按钮已关闭" : "悬浮按钮已打开");
     },
     hideFloatingButtonTemporarily() {
       this.floatButtonHiddenThisPage = true;
@@ -2934,7 +3007,7 @@
       this.toast("悬浮按钮已临时关闭");
     },
     hideFloatingButtonPermanently() {
-      uiManager.saveState(this.floatButtonPrefKey, { hidden: true });
+      this.setFloatingButtonHiddenPref(true);
       this.floatButtonHiddenThisPage = true;
       this.applyFloatingButtonVisibility();
       this.toast("悬浮按钮已永久关闭，可从插件菜单重新打开");
@@ -3068,7 +3141,7 @@
 
 【硬性要求，必须使用在线搜索严格遵守】
 1. 字幕预处理：
-  1. 语音识别问题：由于字幕通常是 AI 识别的，所以可能会有一些问题，例如脑雾被识别成脑物，Trae Work 变成吹work，WorkBuddy 变成 work body。如果你可以肯定字幕一定是写错了，就先更改后再整理。
+  1. 语音识别问题：由于字幕通常是 AI 识别的，所以可能会有一些问题，例如脑雾被识别成脑物，收纳篮被识别成收纳栏，Trae Work 变成吹work，WorkBuddy 变成 work body。如果你可以根据上下文肯定字幕一定是写错了，就先更改后再整理。
   2. 翻译问题：部分字幕是翻译自外文的，所以可能有问题，比如 Doom 被翻译成厄运之类的，或者是语句很奇怪，你可以在确保不会产生歧义且不会影响原意的前提下重构句子，让句子变正常。
   3. 必要时，可以索资料，比如Lock sand实际是LocalSend
   4. 注意要整理好英文的格式，比如 local send 应为 LocalSend，rust desk应为 RustDesk
@@ -3079,6 +3152,7 @@
 6. 可读性很重要，标题、要点、列表、表格、代码块、Emoji等可以按需使用，以此让层次清晰、笔记易读。
 7. 用中文输出；
 8. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
+9. 输出时，不要写诸如 LocalSend（字幕是 lock sand）这样的句段，直接写 LocalSend 就行（除非你非常不确定字幕到底是不是错的）
 
 【建议的笔记结构（可灵活裁剪，视内容而定）】
 # 概要
@@ -4554,7 +4628,7 @@
       // 但保留 close 兜底值和用户已加载的本地字幕
       const prevLocal = this.datas?.local || { body: [] };
       this.datas = { close: { body: [] }, local: prevLocal };
-      
+
       decoder.data = undefined;
 
       // 组装请求参数
