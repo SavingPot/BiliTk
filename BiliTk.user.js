@@ -3292,11 +3292,19 @@
     },
 
     // [4.5] 统一生成视频的标题 / 标准链接 / Markdown 文本，供多处复用
+    // 注意：标题中若含半角 [ ] ( ) 会破坏 Markdown 链接结构，
+    // 统一替换为中文全角符号（【 】（ ）），避免排版错乱。
+    // 返回的 title 已经是净化后的版本，调用方把它塞进 Prompt 后
+    // DeepSeek 也会原样搬进 > 视频：[标题](链接)，同样安全。
     getVideoMarkdownLink() {
       const url = this.getStandardVideoUrl();
       if (!url) throw "无法获取视频链接";
-      const title = this.getCleanTitle();
-      return { title, url, text: `[${title}](${url})` };
+      const safeTitle = String(this.getCleanTitle())
+        .replace(/\[/g, "【")
+        .replace(/\]/g, "】")
+        .replace(/\(/g, "（")
+        .replace(/\)/g, "）");
+      return { title: safeTitle, url, text: `[${safeTitle}](${url})` };
     },
 
     async copyVideoLink(btn) {
