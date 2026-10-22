@@ -3,7 +3,7 @@
 // @namespace    https://github.com/SavingPot/BiliTk
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      1.5.3
+// @version      1.5.4
 // @description  详细介绍见 https://github.com/SavingPot/BiliTk
 // @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
@@ -49,7 +49,6 @@
     }
     if (!pending || !pending.text) return;
 
-    // 超过 50 分钟的旧消息忽略，避免重复发送
     if (pending.ts && Date.now() - pending.ts > 50 * 60 * 1000) {
       try {
         GM_deleteValue(DS_STORAGE_KEY);
@@ -59,7 +58,7 @@
 
     let done = false;
     let attempts = 0;
-    const MAX_ATTEMPTS = 60; // 约 30 秒
+    const MAX_ATTEMPTS = 60;
     let timer = null;
     let tryTimer = null;
 
@@ -96,7 +95,6 @@
       return null;
     };
 
-    // ============ 模拟用户输入 ============
     const simulateTyping = (input, text) => {
       try {
         if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
@@ -121,7 +119,6 @@
       } catch (e) {
         console.warn("[BiliTK→DS] value setter 注入失败，尝试 execCommand", e);
       }
-
       try {
         input.focus();
         if (
@@ -138,7 +135,6 @@
       }
     };
 
-    // ============ 模拟用户按 Enter 发送 ============
     const buildEnterEvent = (type) => {
       const ev = new KeyboardEvent(type, {
         key: "Enter",
@@ -173,15 +169,12 @@
       } catch (e) {
         console.warn("[BiliTK→DS] 模拟 Enter 失败", e);
       }
-
       setTimeout(() => {
         const stillHasText =
           input.tagName === "TEXTAREA" || input.tagName === "INPUT"
             ? input.value.trim().length > 0
             : (input.innerText || "").trim().length > 0;
-
         if (!stillHasText) return;
-
         const sendBtn = findSendButton(input);
         if (sendBtn) {
           sendBtn.click();
@@ -211,13 +204,9 @@
     const tryInject = () => {
       if (done) return;
       if (++attempts > MAX_ATTEMPTS) return cleanup();
-
       const input = findInput();
       if (!input) return;
-
       if (!simulateTyping(input, pending.text)) return cleanup();
-
-      //自检（用来应对 DeepSeek 可能的输入框变化）
       const actual =
         input.tagName === "TEXTAREA" || input.tagName === "INPUT"
           ? input.value
@@ -228,7 +217,6 @@
           input,
         );
       }
-
       setTimeout(() => {
         simulateSend(input);
         cleanup();
@@ -239,7 +227,6 @@
     tryTimer = setTimeout(tryInject, 1200);
   }
 
-  // 当前在 DeepSeek 页面 → 只跑注入逻辑，直接退出
   if (location.hostname === "chat.deepseek.com") {
     handleDeepSeekPage();
     return;
@@ -397,65 +384,162 @@
     },
   };
 
-  const uiManager = {
-    dragMap: new WeakMap(),
-    makeDraggable(handle, container, options = {}) {
-      const state = { isDragging: false, offsetX: 0, offsetY: 0 };
-      const onMouseDown = (e) => {
+  // ============================================================
+  // [4.1] utils：统一工具层（DOM / 拖拽 / 剪贴板 / 时间 / Toast / 存储）
+  // 依赖方向：任何业务模块 → utils，utils 不依赖业务模块。
+  // ============================================================
+  const utils = {
+    // ---------- DOM ----------
+    el(tag, props, parent) {
+      const node = document.createElement(tag);
+      if (props) Object.assign(node, props);
+      if (parent) parent.appendChild(node);
+      return node;
+    },
+    elAt(selector, props, parent) {
+      const node = document.body.querySelector(selector);
+      if (node && props) Object.assign(node, props);
+      if (node && parent) parent.appendChild(node);
+      return node;
+    },
+
+    // ---------- 拖拽 ----------
+    // 统一替换 encoder.initDragging / decoder.initDragging / uiManager.makeDraggable
+    // 返回 destroy 函数，供关闭窗口时清理 document 监听器
+    makeDraggable(handle, container, opts = {}) {
+      let dragging = false,
+        offX = 0,
+        offY = 0;
+      const onDown = (e) => {
         if (
           e.target.closest("button, a, select, input, textarea, [data-no-drag]")
         )
           return;
         e.preventDefault();
         e.stopPropagation();
-        state.isDragging = true;
-        const rect = container.getBoundingClientRect();
-        state.offsetX = e.clientX - rect.left;
-        state.offsetY = e.clientY - rect.top;
+        dragging = true;
+        const r = container.getBoundingClientRect();
+        offX = e.clientX - r.left;
+        offY = e.clientY - r.top;
         handle.style.cursor = "grabbing";
         container.style.transition = "none";
         container.classList.add("dragging");
       };
-      const onMouseMove = (e) => {
-        if (!state.isDragging) return;
-        let x = e.clientX - state.offsetX,
-          y = e.clientY - state.offsetY;
-        const maxX = window.innerWidth - container.offsetWidth,
-          maxY = window.innerHeight - container.offsetHeight;
-        x = Math.max(0, Math.min(x, maxX));
-        y = Math.max(0, Math.min(y, maxY));
+      const onMove = (e) => {
+        if (!dragging) return;
+        const x = Math.max(
+          0,
+          Math.min(e.clientX - offX, window.innerWidth - container.offsetWidth),
+        );
+        const y = Math.max(
+          0,
+          Math.min(
+            e.clientY - offY,
+            window.innerHeight - container.offsetHeight,
+          ),
+        );
         container.style.left = x + "px";
         container.style.top = y + "px";
         container.style.transform = "none";
-        if (options.onMove) options.onMove(x, y);
+        opts.onMove && opts.onMove(x, y);
       };
-      const onMouseUp = () => {
-        if (!state.isDragging) return;
-        state.isDragging = false;
+      const onUp = () => {
+        if (!dragging) return;
+        dragging = false;
         handle.style.cursor = "move";
-        container.style.transition = options.transition || "";
+        container.style.transition = opts.transition || "";
         container.classList.remove("dragging");
-        if (options.onEnd) options.onEnd();
+        opts.onEnd && opts.onEnd();
       };
-      handle.addEventListener("mousedown", onMouseDown);
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-      this.dragMap.set(container, {
-        destroy() {
-          handle.removeEventListener("mousedown", onMouseDown);
-          document.removeEventListener("mousemove", onMouseMove);
-          document.removeEventListener("mouseup", onMouseUp);
-        },
-      });
-      return this.dragMap.get(container);
+      handle.addEventListener("mousedown", onDown);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      return () => {
+        handle.removeEventListener("mousedown", onDown);
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
     },
-    showToast(message, type = "success") {
-      if (typeof encoder !== "undefined" && encoder.showToast) {
-        encoder.showToast(message, type);
-        return;
+
+    // ---------- 剪贴板 ----------
+    async copy(text) {
+      try {
+        if (typeof GM_setClipboard === "function") {
+          GM_setClipboard(text, "text");
+          return true;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+        const ta = Object.assign(document.createElement("textarea"), {
+          value: text,
+          style: "position:fixed;left:-9999px;top:0;",
+        });
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        return ok;
+      } catch (e) {
+        console.error("[utils.copy]", e);
+        return false;
+      }
+    },
+
+    // ---------- 时间 ----------
+    // 统一替换 encoder.encodeTime / formatSubtitleWithTimestamps 内的重复逻辑
+    fmtTime(sec, format = "SRT") {
+      sec = Math.max(0, Number(sec) || 0);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const ms = Math.round((sec - Math.floor(sec)) * 1000);
+      const p2 = (n) => String(n).padStart(2, "0");
+      switch (format) {
+        case "SRT":
+          return `${p2(h)}:${p2(m)}:${p2(s)},${String(ms).padStart(3, "0")}`;
+        case "VTT":
+          return `${p2(h)}:${p2(m)}:${p2(s)}.${String(ms).padStart(3, "0")}`;
+        case "ASS":
+          return `${h}:${p2(m)}:${p2(s)}.${p2(Math.floor(ms / 10))}`;
+        case "LRC": {
+          const totalMin = m + h * 60;
+          return `[${p2(totalMin)}:${p2(s)}.${p2(Math.floor(ms / 10))}]`;
+        }
+        case "MMSS":
+          return h > 0 ? `${p2(h)}:${p2(m)}:${p2(s)}` : `${p2(m)}:${p2(s)}`;
+        default:
+          return `${sec}`;
+      }
+    },
+
+    // ---------- Toast ----------
+    // 优先转给业务层统一入口，避免 utils → 业务层的硬依赖
+    toast(message, type = "success") {
+      try {
+        if (
+          typeof bilibiliCCHelper !== "undefined" &&
+          typeof bilibiliCCHelper.toast === "function"
+        ) {
+          bilibiliCCHelper.toast(message, type === "error" ? true : undefined);
+          return;
+        }
+        if (
+          typeof encoder !== "undefined" &&
+          typeof encoder.showToast === "function"
+        ) {
+          encoder.showToast(message, type);
+          return;
+        }
+      } catch (e) {
+        console.warn("[utils.toast] 转发失败", e);
       }
       console.warn("[BiliTK toast]", message);
     },
+
+    // ---------- 存储 ----------
     saveState(key, state) {
       try {
         localStorage.setItem(key, JSON.stringify(state));
@@ -468,6 +552,19 @@
       } catch (e) {
         return defaults;
       }
+    },
+  };
+
+  // [4.1] uiManager 保留为 utils 的薄包装（少量调用点用到 UI 状态）
+  const uiManager = {
+    showToast(message, type = "success") {
+      utils.toast(message, type);
+    },
+    saveState(key, state) {
+      utils.saveState(key, state);
+    },
+    loadState(key, defaults) {
+      return utils.loadState(key, defaults);
     },
   };
 
@@ -496,8 +593,6 @@
   // ============================================================
   // Bilibili WBI 签名（内嵌自 Bilibili WBI Signer Library v1.2.0）
   // 原作者：Kaesinol（https://greasyfork.org/scripts/580254）
-  // 说明：为避免第三方 @require 供应链风险，采用内嵌方式。
-  //       若 B 站修改签名算法，请手动同步更新本块。
   // ============================================================
   const WBI_MIXIN_KEY_ENC_TAB = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
@@ -581,6 +676,165 @@
     return `${query}&w_rid=${wbiSign}`;
   }
 
+  // ============================================================
+  // [4.2] biliApi：统一 API 层（WBI 签名 + 字幕配置 + 字幕正文）
+  // 依赖方向：biliApi → utils，不依赖任何业务模块。
+  // 契约：
+  //   fetchSubtitleConfig(p) → { subtitles: [{lan, lan_doc, subtitle_url, ...}], allow_submit? }
+  //     - subtitles 不含 close / local（由 controller 自行 push）
+  //     - subtitle_url 已规范化为可直接 fetch 的字符串
+  //   fetchSubtitleBody(url) → { body: [{from, to, content}] }
+  //     - HTTP 失败 / 结构错误 都会 throw
+  // ============================================================
+  const biliApi = {
+    _wbiKeys: null,
+    _wbiKeysTime: 0,
+    _wbiKeysPromise: null,
+    _wbiWarned: false,
+    WBI_KEYS_TTL: 4 * 60 * 60 * 1000,
+
+    async fetchWbiKeys() {
+      const res = await fetch("https://api.bilibili.com/x/web-interface/nav", {
+        credentials: "include",
+      });
+      if (res.status !== 200) {
+        throw new Error("nav 接口请求失败: " + res.status);
+      }
+      const data = await res.json();
+      if (!data || !data.data || !data.data.wbi_img) {
+        throw new Error("nav 接口返回异常: " + JSON.stringify(data));
+      }
+      const { img_url, sub_url } = data.data.wbi_img;
+      return {
+        img_key: img_url.slice(
+          img_url.lastIndexOf("/") + 1,
+          img_url.lastIndexOf("."),
+        ),
+        sub_key: sub_url.slice(
+          sub_url.lastIndexOf("/") + 1,
+          sub_url.lastIndexOf("."),
+        ),
+      };
+    },
+
+    async getWbiKeys() {
+      const now = Date.now();
+      if (this._wbiKeys && now - this._wbiKeysTime < this.WBI_KEYS_TTL) {
+        return this._wbiKeys;
+      }
+      if (this._wbiKeysPromise) return this._wbiKeysPromise;
+      this._wbiKeysPromise = this.fetchWbiKeys()
+        .then((keys) => {
+          this._wbiKeys = keys;
+          this._wbiKeysTime = Date.now();
+          return keys;
+        })
+        .finally(() => {
+          this._wbiKeysPromise = null;
+        });
+      return this._wbiKeysPromise;
+    },
+
+    async sign(params) {
+      try {
+        const { img_key, sub_key } = await this.getWbiKeys();
+        return wbiGetSignedQuery(params, img_key, sub_key);
+      } catch (e) {
+        console.warn("[biliApi] WBI 签名失败，降级为不签名请求", e);
+        if (!this._wbiWarned) {
+          this._wbiWarned = true;
+          utils.toast("⚠️ WBI 签名失败，已降级为不签名请求", "error");
+        }
+        return Object.entries(params)
+          .map(
+            ([k, v]) =>
+              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
+          )
+          .join("&");
+      }
+    },
+
+    /**
+     * 统一获取字幕配置（单集下载 / 批量下载共用）
+     * @param {{cid?, ep_id?, aid?, bvid?}} p
+     */
+    async fetchSubtitleConfig(p) {
+      const params = {};
+      if (p.cid) params.cid = String(p.cid);
+      else if (p.ep_id) params.ep_id = String(p.ep_id);
+      if (p.aid) params.aid = String(p.aid);
+      else if (p.bvid) params.bvid = String(p.bvid);
+      if (!Object.keys(params).length) throw "缺少视频参数";
+
+      // cid 走 WBI 签名；ep_id 走原不签名路径
+      let url;
+      if (p.cid) {
+        const q = await this.sign(params);
+        url = `https://api.bilibili.com/x/player/wbi/v2?${q}`;
+      } else {
+        const q = Object.entries(params)
+          .map(
+            ([k, v]) =>
+              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
+          )
+          .join("&");
+        url = `https://api.bilibili.com/x/player/v2?${q}`;
+      }
+
+      let ret = await fetch(url, { credentials: "include" }).then((r) =>
+        r.json(),
+      );
+
+      // -404 降级走 APP 字幕接口
+      if (ret.code === -404 && p.cid) {
+        const dm = p.aid
+          ? `aid=${encodeURIComponent(p.aid)}`
+          : `bvid=${encodeURIComponent(p.bvid || "")}`;
+        ret = await fetch(
+          `https://api.bilibili.com/x/v2/dm/view?${dm}&oid=${encodeURIComponent(
+            p.cid,
+          )}&type=1`,
+          { credentials: "include" },
+        ).then((r) => r.json());
+        if (ret.code !== 0) throw ret.message || "无法读取字幕配置";
+        const sub = ret.data?.subtitle || { subtitles: [] };
+        sub.subtitles = (sub.subtitles || []).map((it) =>
+          it.subtitle_url
+            ? {
+                ...it,
+                subtitle_url: it.subtitle_url.replace(/https?:\/\//, "//"),
+              }
+            : it,
+        );
+        return { ...sub, allow_submit: false };
+      }
+
+      if (ret.code !== 0 || !ret.data?.subtitle)
+        throw ret.message || `读取字幕配置失败（${ret.code}）`;
+      return ret.data.subtitle;
+    },
+
+    /** 拉取字幕正文（统一 URL 规范化 + res.ok + 结构校验） */
+    async fetchSubtitleBody(url) {
+      const full = new URL(
+        String(url).replace(/^https?:\/\//, "//"),
+        location.href,
+      ).href;
+      const res = await fetch(full);
+      if (!res.ok && res.status !== 0) throw `字幕请求失败（${res.status}）`;
+      const data = await res.json();
+      if (!data || !Array.isArray(data.body)) throw "字幕数据格式错误";
+      return data;
+    },
+  };
+
+  // ============================================================
+  // encoder：字幕编码 + 下载/预览窗口 UI
+  // [4.1] 拖拽 → utils.makeDraggable
+  // [4.1] 复制 → utils.copy
+  // [4.1] 时间 → utils.fmtTime
+  // 已删除死字段：isDragging / dragOffsetX / dragOffsetY / initDragging / fallbackCopy
+  // ============================================================
   const encoder = {
     assHead: [
       "[Script Info]",
@@ -606,9 +860,6 @@
       "[Events]",
       "Format: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text",
     ],
-    isDragging: false,
-    dragOffsetX: 0,
-    dragOffsetY: 0,
     dialogElement: null,
     panelElement: null,
     currentLan: null,
@@ -653,7 +904,6 @@
     showDialog(data, download, lan) {
       if (!data || !(data.body instanceof Array)) throw "数据错误";
 
-      // 若上一次窗口未关闭，先彻底清理，避免监听器和 Blob URL 累积
       this._cleanupDialog();
 
       this.data = data;
@@ -701,7 +951,9 @@
           target: "_blank",
           style:
             "position:absolute;right:0;top:0;color:#606060;font-size:13px;white-space:nowrap;",
-          innerHTML: `当前版本：${(typeof GM_info != "undefined" && GM_info.script.version) || "1.0"}`,
+          innerHTML: `当前版本：${
+            (typeof GM_info != "undefined" && GM_info.script.version) || "1.0"
+          }`,
         },
         header,
       );
@@ -892,7 +1144,10 @@
         },
         bottomPanel,
       );
-      this._destroyDrag = this.initDragging(header, panel);
+      // [4.1] 拖拽改用 utils.makeDraggable
+      this._destroyDrag = utils.makeDraggable(header, panel, {
+        transition: "transform 0.2s, left 0.2s, top 0.2s",
+      });
       this.updateDownload(type, download);
     },
 
@@ -982,7 +1237,6 @@
         document.addEventListener("mouseup", onUp);
       };
       handle.addEventListener("mousedown", onDown);
-      // 返回 destroy 函数，关闭窗口时可清理未完成的拖拽监听器
       return function destroy() {
         resizing = false;
         handle.classList.remove("active");
@@ -992,51 +1246,7 @@
       };
     },
 
-    initDragging(handle, container) {
-      const self = this;
-      const onMouseDown = function (e) {
-        if (
-          e.target.tagName === "BUTTON" ||
-          e.target.tagName === "A" ||
-          e.target.innerHTML === "×"
-        )
-          return;
-        e.stopPropagation();
-        self.isDragging = true;
-        const rect = container.getBoundingClientRect();
-        self.dragOffsetX = e.clientX - rect.left;
-        self.dragOffsetY = e.clientY - rect.top;
-        handle.style.cursor = "grabbing";
-        container.style.transition = "none";
-        e.preventDefault();
-      };
-      const onMouseMove = function (e) {
-        if (!self.isDragging) return;
-        const x = e.clientX - self.dragOffsetX,
-          y = e.clientY - self.dragOffsetY;
-        const maxX = window.innerWidth - container.offsetWidth,
-          maxY = window.innerHeight - container.offsetHeight;
-        container.style.left = Math.max(0, Math.min(x, maxX)) + "px";
-        container.style.top = Math.max(0, Math.min(y, maxY)) + "px";
-        container.style.transform = "none";
-      };
-      const onMouseUp = function () {
-        if (self.isDragging) {
-          self.isDragging = false;
-          handle.style.cursor = "move";
-          container.style.transition = "transform 0.2s, left 0.2s, top 0.2s";
-        }
-      };
-      handle.addEventListener("mousedown", onMouseDown);
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-      return function destroy() {
-        handle.removeEventListener("mousedown", onMouseDown);
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-      };
-    },
-
+    // [4.1] 复制改用 utils.copy（保留按钮视觉反馈）
     copyToClipboard() {
       if (!this.textArea) return;
       const text = this.textArea.value;
@@ -1044,47 +1254,10 @@
         this.showToast("没有可复制的内容！", "error");
         return;
       }
-      try {
-        if (typeof GM_setClipboard !== "undefined") {
-          GM_setClipboard(text, "text");
-          this.showCopySuccess();
-        } else if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard
-            .writeText(text)
-            .then(() => {
-              this.showCopySuccess();
-            })
-            .catch((err) => {
-              this.fallbackCopy(text);
-            });
-        } else {
-          this.fallbackCopy(text);
-        }
-      } catch (e) {
-        this.fallbackCopy(text);
-      }
-    },
-
-    fallbackCopy(text) {
-      const textArea = document.createElement("textarea");
-      textArea.value = text;
-      textArea.style.position = "fixed";
-      textArea.style.left = "-9999px";
-      textArea.style.top = "0";
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
-      try {
-        const successful = document.execCommand("copy");
-        if (successful) {
-          this.showCopySuccess();
-        } else {
-          this.showToast("❌ 复制失败，请手动复制", "error");
-        }
-      } catch (err) {
-        this.showToast("❌ 复制失败，请手动复制", "error");
-      }
-      document.body.removeChild(textArea);
+      utils.copy(text).then((ok) => {
+        if (ok) this.showCopySuccess();
+        else this.showToast("❌ 复制失败，请手动复制", "error");
+      });
     },
 
     showCopySuccess() {
@@ -1111,7 +1284,9 @@
         {
           className: "copy-success-toast",
           innerText: message,
-          style: `position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:1048579;background:${type === "error" ? "#e85d5d" : "#20b26b"};color:#fff;padding:12px 22px;border-radius:6px;font-size:14px;line-height:1.4;box-shadow:0 3px 12px rgba(0,0,0,.28);pointer-events:none;white-space:nowrap;animation:none;`,
+          style: `position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:1048579;background:${
+            type === "error" ? "#e85d5d" : "#20b26b"
+          };color:#fff;padding:12px 22px;border-radius:6px;font-size:14px;line-height:1.4;box-shadow:0 3px 12px rgba(0,0,0,.28);pointer-events:none;white-space:nowrap;animation:none;`,
         },
         document.body,
       );
@@ -1121,7 +1296,6 @@
     },
 
     updateDownload(type = "LRC", download) {
-      // 窗口已被关闭（异步回调可能晚到），直接忽略
       if (!this.textArea || !this.actionButton || !this.openTabButton) return;
       let result;
       let blobResult;
@@ -1151,7 +1325,6 @@
       this.textArea.value = result;
       localStorage.defaultSubtitleType = type;
       type = type.toLowerCase();
-      // 同时释放 actionButton 与 openTabButton 的旧 Blob URL，避免每次切换格式泄漏
       [this.actionButton, this.openTabButton].forEach((el) => {
         if (el && el.href && el.href.startsWith("blob:")) {
           URL.revokeObjectURL(el.href);
@@ -1167,11 +1340,12 @@
       });
       this.actionButton.href = URL.createObjectURL(blobResult);
       this.openTabButton.href = URL.createObjectURL(blobResult);
-      this.actionButton.download = `${bilibiliCCHelper.getInfo("h1Title") || document.title}.${type}`;
+      this.actionButton.download = `${
+        bilibiliCCHelper.getInfo("h1Title") || document.title
+      }.${type}`;
       if (download) {
         const url = this.actionButton.href;
         this.actionButton.click();
-        // 给浏览器留出真正开始下载的时间，再释放 Blob URL 并关闭窗口
         setTimeout(() => {
           if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
           if (this.closeButton) this.closeButton.click();
@@ -1181,14 +1355,19 @@
     encodeToLRC(data) {
       return data
         .map(({ from, to, content }) => {
-          return `${this.encodeTime(from, "LRC")} ${content.replace(/\n/g, " ")}`;
+          return `${this.encodeTime(from, "LRC")} ${content.replace(
+            /\n/g,
+            " ",
+          )}`;
         })
         .join("\r\n");
     },
     encodeToSRT(data) {
       return data
         .map(({ from, to, content }, index) => {
-          return `${index + 1}\r\n${this.encodeTime(from)} --> ${this.encodeTime(to)}\r\n${content}`;
+          return `${index + 1}\r\n${this.encodeTime(from)} --> ${this.encodeTime(
+            to,
+          )}\r\n${content}`;
         })
         .join("\r\n\r\n");
     },
@@ -1197,7 +1376,10 @@
         "WEBVTT \r\n\r\n" +
         data
           .map(({ from, to, content }, index) => {
-            return `${index + 1}\r\n${this.encodeTime(from, "VTT")} --> ${this.encodeTime(to, "VTT")}\r\n${content}`;
+            return `${index + 1}\r\n${this.encodeTime(
+              from,
+              "VTT",
+            )} --> ${this.encodeTime(to, "VTT")}\r\n${content}`;
           })
           .join("\r\n\r\n")
       );
@@ -1205,31 +1387,31 @@
     encodeToASS(data, title = document.title) {
       const head = this.assHead.slice();
       head[1] = `Title: ${title}`;
-      // head[10] 保留原来的 `; 字幕来源${document.location}` —— 这行不改
       return head
         .concat(
           data.map(({ from, to, content }) => {
-            return `Dialogue: 0,${this.encodeTime(from, "ASS")},${this.encodeTime(to, "ASS")},*Default,NTP,0000,0000,0000,,${content.replace(/\n/g, "\\N")}`;
+            return `Dialogue: 0,${this.encodeTime(
+              from,
+              "ASS",
+            )},${this.encodeTime(
+              to,
+              "ASS",
+            )},*Default,NTP,0000,0000,0000,,${content.replace(/\n/g, "\\N")}`;
           }),
         )
         .join("\r\n");
     },
+    // [4.1] 时间格式化统一走 utils.fmtTime
     encodeTime(input, format = "SRT") {
-      const time = new Date(input * 1000),
-        ms = time.getMilliseconds(),
-        second = time.getSeconds(),
-        minute = time.getMinutes(),
-        hour = Math.floor(input / 60 / 60);
-      const pad = (n, len = 2) => String(n).padStart(len, "0");
-      if (format === "SRT" || format === "VTT")
-        return `${pad(hour)}:${pad(minute)}:${pad(second)}${format === "SRT" ? "," : "."}${pad(ms, 3)}`;
-      if (format === "ASS")
-        return `${hour}:${pad(minute)}:${pad(second)}.${pad(Math.floor(ms / 10), 2)}`;
-      const totalMin = minute + hour * 60;
-      return `[${pad(totalMin)}:${pad(second)}.${pad(Math.floor(ms / 10), 2)}]`;
+      return utils.fmtTime(input, format);
     },
   };
 
+  // ============================================================
+  // decoder：本地字幕解码 + 本地字幕选择面板
+  // [4.1] 拖拽 → utils.makeDraggable
+  // 已删除死字段：isDragging / dragOffsetX / dragOffsetY / dialogMove
+  // ============================================================
   const decoder = {
     srtReg:
       /(?:(\d+):)?(\d{1,2}):(\d{1,2})[,\.](\d{1,3})\s*(?:-->|,)\s*(?:(\d+):)?(\d{1,2}):(\d{1,2})[,\.](\d{1,3})\r?\n([.\s\S]+)/,
@@ -1242,9 +1424,6 @@
     file: undefined,
     data: undefined,
     statusHandler: undefined,
-    isDragging: false,
-    dragOffsetX: 0,
-    dragOffsetY: 0,
     show(handler) {
       this.statusHandler = handler;
       const playerEl = elements.getAs("#bilibiliPlayer");
@@ -1253,7 +1432,6 @@
         return;
       }
       if (!this.dialog) {
-        this.moveAction = (ev) => this.dialogMove(ev);
         this.dialog = elements.createAs(
           "div",
           {
@@ -1356,47 +1534,9 @@
         this.handleSubtitle();
       }
       if (typeof this._destroyDrag === "function") this._destroyDrag();
-      this._destroyDrag = this.initDragging(this._dragHandle, this.dialog);
+      // [4.1] 拖拽改用 utils.makeDraggable
+      this._destroyDrag = utils.makeDraggable(this._dragHandle, this.dialog);
     },
-    initDragging(handle, container) {
-      const self = this;
-      const onMouseDown = function (e) {
-        if (e.target.innerHTML === "×") return;
-        e.stopPropagation();
-        self.isDragging = true;
-        const rect = container.getBoundingClientRect();
-        self.dragOffsetX = e.clientX - rect.left;
-        self.dragOffsetY = e.clientY - rect.top;
-        handle.style.cursor = "grabbing";
-        container.style.transition = "none";
-        e.preventDefault();
-      };
-      const onMouseMove = function (e) {
-        if (!self.isDragging) return;
-        const x = e.clientX - self.dragOffsetX,
-          y = e.clientY - self.dragOffsetY;
-        const maxX = window.innerWidth - container.offsetWidth,
-          maxY = window.innerHeight - container.offsetHeight;
-        container.style.left = Math.max(0, Math.min(x, maxX)) + "px";
-        container.style.top = Math.max(0, Math.min(y, maxY)) + "px";
-        container.style.transform = "none";
-      };
-      const onMouseUp = function () {
-        if (self.isDragging) {
-          self.isDragging = false;
-          handle.style.cursor = "move";
-        }
-      };
-      handle.addEventListener("mousedown", onMouseDown);
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-      return function destroy() {
-        handle.removeEventListener("mousedown", onMouseDown);
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-      };
-    },
-    dialogMove(ev) {},
     readFile() {
       if (!this.file) {
         this.data = undefined;
@@ -1547,6 +1687,10 @@
     },
   };
 
+  // ============================================================
+  // oldPlayerHelper / player2x / player315 / player314
+  // 4 种播放器版本适配（本段未改动逻辑，保留原实现）
+  // ============================================================
   const oldPlayerHelper = {
     setting: undefined,
     subtitle: undefined,
@@ -1980,8 +2124,8 @@
           'li.bui-select-item[data-value="close"]',
         ),
         localItem = closeItem.cloneNode();
-      delete localItem.dataset.value; //删除可能被继承的 data-value="close"
-      localItem.classList.remove("bui-select-item-active"); //删除可能被继承的 data-value="close"
+      delete localItem.dataset.value;
+      localItem.classList.remove("bui-select-item-active");
       elements.setAs(downloadBtn, {
         style: "min-width:unset!important",
         innerText: "下载",
@@ -2272,6 +2416,15 @@
     },
   };
 
+  // ============================================================
+  // bilibiliCCHelper：控制器
+  // [4.2] WBI + 字幕请求 → biliApi
+  // [4.3] 3 个 DeepSeek 发送函数 → _sendToDeepSeek / _deliverToDeepSeek
+  // [4.4] getBatchItems 默认值修复
+  // [4.5] 抽出 getVideoMarkdownLink，标题+链接统一由它生成
+  // 已删除：_asrDsWindow / _wbiKeys / _wbiKeysTime / _wbiKeysPromise /
+  //         _wbiWarned / WBI_KEYS_TTL / fetchWbiKeys / getWbiKeys / signWbiQuery
+  // ============================================================
   const bilibiliCCHelper = {
     window: "undefined" == typeof unsafeWindow ? window : unsafeWindow,
     player: undefined,
@@ -2282,21 +2435,11 @@
     floatButton: null,
     floatButtonHiddenThisPage: false,
     floatButtonPrefKey: "bilibili_cc_float_button_hidden_v1",
-    // 缓存悬浮按钮的全局显示状态，避免高频 MutationObserver 反复读 localStorage
     _floatBtnHiddenPref: null,
 
-    // 用于控制取消状态
     _asrAbortController: null,
     _asrXHR: null,
     _asrProgressTimer: null,
-    _asrDsWindow: null,
-
-    // WBI keys 缓存
-    _wbiKeys: null,
-    _wbiKeysTime: 0,
-    _wbiKeysPromise: null,
-    _wbiWarned: false,
-    WBI_KEYS_TTL: 4 * 60 * 60 * 1000,
 
     DEEPSEEK_WHALE_SVG:
       '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"></path></svg>',
@@ -2339,6 +2482,100 @@
       if (el) el.remove();
     },
 
+    // [4.3] 新增：统一的 DeepSeek 投递入口（存 → 复制 → 打开 tab → 提示）
+    async _deliverToDeepSeek(promptText, okMsg) {
+      let stored = false;
+      try {
+        if (typeof GM_setValue === "function") {
+          GM_setValue(DS_STORAGE_KEY, { text: promptText, ts: Date.now() });
+          stored = true;
+        }
+      } catch (e) {}
+      await utils.copy(promptText);
+      if (typeof GM_openInTab !== "undefined") {
+        GM_openInTab("https://chat.deepseek.com/", { active: true });
+      } else {
+        window.open("https://chat.deepseek.com/", "_blank");
+      }
+      encoder.showToast(
+        stored ? okMsg : "✅ 已复制内容并打开 DeepSeek，请粘贴发送",
+      );
+    },
+
+    // [4.3] 新增：统一的"获取当前视频首选字幕数据"入口
+    async _getPreferredSubtitleData() {
+      const subtitle = await this.setupData();
+      if (!subtitle) throw "当前页面还没有读取到视频信息";
+      const languages = (subtitle.subtitles || []).filter(
+        (item) => item.lan !== "close" && item.lan !== "local",
+      );
+      if (!languages.length) throw "当前视频没有可用的在线字幕";
+      const lan =
+        encoder.currentLan &&
+        languages.some((item) => item.lan === encoder.currentLan)
+          ? encoder.currentLan
+          : languages[0].lan;
+      const data = await this.getSubtitle(lan);
+      if (!data || !Array.isArray(data.body) || !data.body.length)
+        throw "字幕内容为空";
+      return { data, lan };
+    },
+
+    // [4.3] 新增：统一的"发送字幕到 DeepSeek"入口（普通 / 带时间戳共用）
+    async _sendToDeepSeek({ btn, withTimestamp }) {
+      if (btn) {
+        btn.style.pointerEvents = "none";
+        btn.style.opacity = "0.65";
+      }
+      try {
+        encoder.showToast("正在获取字幕…");
+        const { data, lan } = await this._getPreferredSubtitleData();
+        // [4.5] 标题 / 链接 / Markdown 文本统一由 getVideoMarkdownLink 生成
+        const { title, url } = this.getVideoMarkdownLink();
+        const lanDoc = (this.getSubtitleInfo(lan) || {}).lan_doc || lan;
+        const meta = `视频标题：${title}\n视频链接：${url}\n字幕语言：${lanDoc}\n字幕条数：${data.body.length}`;
+        let prompt;
+        if (withTimestamp) {
+          const timestamped = this.formatSubtitleWithTimestamps(data.body);
+          prompt =
+            this.OBSIDIAN_SKILL_PROMPT +
+            this.OBSIDIAN_TIMESTAMP_EXTRA +
+            `\n\n===== 以下是要处理的视频字幕（每条均带时间戳）=====\n` +
+            `${meta}\n\n` +
+            timestamped;
+        } else {
+          const srt = encoder.encodeToSRT(data.body);
+          prompt =
+            this.OBSIDIAN_SKILL_PROMPT +
+            `\n\n===== 以下是要处理的视频字幕 =====\n` +
+            `${meta}\n\n` +
+            srt;
+        }
+        await this._deliverToDeepSeek(
+          prompt,
+          withTimestamp
+            ? "✅ 已打开 DeepSeek，正在自动发送带时间戳的字幕…"
+            : "✅ 已打开 DeepSeek，正在自动发送字幕…",
+        );
+      } catch (e) {
+        console.error("发送字幕到 DeepSeek 失败", e);
+        encoder.showToast(`❌ 发送失败：${e}`, "error");
+      } finally {
+        if (btn) {
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }
+      }
+    },
+
+    // 保留原入口签名，内部走统一流程
+    async sendSubtitleToDeepSeek(btn) {
+      return this._sendToDeepSeek({ btn, withTimestamp: false });
+    },
+    async sendSubtitleToDeepSeekWithTimestamps(btn) {
+      return this._sendToDeepSeek({ btn, withTimestamp: true });
+    },
+
     async sendLocalAsrToDeepSeekClean(btn) {
       if (!btn) {
         btn = this.localAsrDeepseekButton;
@@ -2353,25 +2590,15 @@
           this._asrAbortController.abort();
           this._asrAbortController = null;
         }
-        /*
-        GM_xmlhttpRequest 的返回值在部分用户脚本管理器（旧版 Greasemonkey / 某些打包版）里没有 abort 方法，会 TypeError，导致整个取消逻辑崩掉
-        if (this._asrXHR) {
-          this._asrXHR.abort();
-          this._asrXHR = null;
-        }
-        */
         if (this._asrXHR && typeof this._asrXHR.abort === "function") {
           this._asrXHR.abort();
         }
         this._asrXHR = null;
-
         if (this._asrProgressTimer) {
           clearInterval(this._asrProgressTimer);
           this._asrProgressTimer = null;
         }
         this.hideProgressUI();
-
-        // 通知后端取消
         if (this._currentTaskId && typeof GM_xmlhttpRequest !== "undefined") {
           GM_xmlhttpRequest({
             method: "POST",
@@ -2379,7 +2606,6 @@
           });
           this._currentTaskId = null;
         }
-
         btn.dataset.running = "0";
         btn.innerHTML =
           this.DEEPSEEK_WHALE_SVG +
@@ -2434,7 +2660,7 @@
           throw e;
         }
 
-        // 4. 心跳检测（检查服务是否在线）
+        // 4. 心跳检测
         encoder.showToast("正在检查本地服务状态…");
         let isServerRunning = false;
         try {
@@ -2453,20 +2679,15 @@
           isServerRunning = false;
         }
 
-        // 5. 如果服务未运行，触发自定义协议唤醒（配合 install_protocol.sh）
+        // 5. 唤醒本地服务
         if (!isServerRunning) {
           encoder.showToast("正在唤醒本地服务，请在弹出的提示中点击允许…");
-          window.open("bili-asr://start", "_blank"); // 触发系统协议
+          window.open("bili-asr://start", "_blank");
 
-          // 改为循环轮询，最多等 30 秒，每 2 秒查一次
           let wakeSuccess = false;
           for (let i = 0; i < 15; i++) {
-            // 等待 2 秒
             await new Promise((r) => setTimeout(r, 2000));
-
-            // 如果用户中途点了“取消”
             if (btn.dataset.running !== "1") throw "用户取消";
-
             try {
               await new Promise((resolve, reject) => {
                 GM_xmlhttpRequest({
@@ -2479,9 +2700,8 @@
                 });
               });
               wakeSuccess = true;
-              break; // 连通了，立刻跳出循环
+              break;
             } catch (e) {
-              // 没连通，继续循环，顺便更新一下进度条文案
               this.updateProgressUI(`等待本地服务启动… (${(i + 1) * 2}s)`);
             }
           }
@@ -2492,7 +2712,7 @@
           encoder.showToast("✅ 服务已成功唤醒");
         }
 
-        // 6. 显示进度条，提交任务给 8001 端口
+        // 6. 提交任务
         this.showProgressUI("发送给本地识别中...");
         const formData = new FormData();
         formData.append("file", audioBlob, "audio.m4s");
@@ -2561,13 +2781,10 @@
 
           this._asrProgressTimer = setInterval(() => {
             if (settled) return;
-            // 取消检查
             if (btn.dataset.running !== "1") {
               return fail(new Error("用户取消"));
             }
-            // 上一次请求还没回来，跳过本轮，避免堆积
             if (inflight) return;
-
             inflight = true;
             GM_xmlhttpRequest({
               method: "GET",
@@ -2618,28 +2835,15 @@
         this.hideProgressUI();
         if (!text || !text.trim()) throw "识别结果为空";
 
-        // 8. 组装 Prompt
-        const title = this.getCleanTitle();
+        // 8. 组装 Prompt 并投递
+        // [4.5] 标题 / 链接 / Markdown 文本统一由 getVideoMarkdownLink 生成
+        const { title, url } = this.getVideoMarkdownLink();
         const prompt =
           this.OBSIDIAN_SKILL_PROMPT +
-          `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n视频标题：${title}\n字幕来源：纯本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n\n` +
+          `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n视频标题：${title}\n视频链接：${url}\n字幕来源：纯本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n\n` +
           text;
 
-        try {
-          if (typeof GM_setValue === "function") {
-            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
-          }
-        } catch (e) {}
-        await this.copyTextToClipboard(prompt);
-
-        // 9. 打开 DeepSeek
-        if (typeof GM_openInTab !== "undefined") {
-          GM_openInTab("https://chat.deepseek.com/", { active: true });
-        } else {
-          window.open("https://chat.deepseek.com/", "_blank");
-        }
-
-        encoder.showToast("✅ 已跳转 DeepSeek 自动发送…");
+        await this._deliverToDeepSeek(prompt, "✅ 已跳转 DeepSeek 自动发送…");
       } catch (e) {
         console.error("纯本地识别失败", e);
         this.hideProgressUI();
@@ -2971,7 +3175,6 @@
       return false;
     },
 
-    // 缓存全局开关，避免每帧读取 localStorage
     getFloatingButtonHiddenPref() {
       if (this._floatBtnHiddenPref === null) {
         const state = uiManager.loadState(this.floatButtonPrefKey, {
@@ -3035,7 +3238,7 @@
         if (!data || !Array.isArray(data.body) || !data.body.length)
           throw "字幕内容为空";
         const srt = encoder.encodeToSRT(data.body);
-        const ok = await this.copyTextToClipboard(srt);
+        const ok = await utils.copy(srt);
         if (!ok) throw "浏览器拒绝了剪贴板访问";
         encoder.showToast(`✅ 已复制 SRT 字幕（${data.body.length} 条）`);
       } catch (e) {
@@ -3060,9 +3263,6 @@
         return `https://www.bilibili.com/${m[1].toLowerCase()}/play/ss${m[2]}`;
       const params = new URLSearchParams(search);
 
-      // 1. 先尝试从 URL 路径里抠 BV 号（/video/BVxxx）
-      // 2. 再尝试从当前 URL 的查询字符串（也就是?后面那部分）里取出 bvid 参数的值，取不到返回 null，继续往下
-      // 3. 最后再尝试从全局状态 / getEpInfo 缓存里兜底
       const bvid =
         (pathname.match(/\/video\/(BV[0-9A-Za-z]+)/) || [])[1] ||
         params.get("bvid") ||
@@ -3091,6 +3291,14 @@
       return title || "视频";
     },
 
+    // [4.5] 统一生成视频的标题 / 标准链接 / Markdown 文本，供多处复用
+    getVideoMarkdownLink() {
+      const url = this.getStandardVideoUrl();
+      if (!url) throw "无法获取视频链接";
+      const title = this.getCleanTitle();
+      return { title, url, text: `[${title}](${url})` };
+    },
+
     async copyVideoLink(btn) {
       if (btn) {
         btn.style.pointerEvents = "none";
@@ -3099,7 +3307,7 @@
       try {
         const url = this.getStandardVideoUrl();
         if (!url) throw "无法获取视频链接";
-        const ok = await this.copyTextToClipboard(url);
+        const ok = await utils.copy(url);
         if (!ok) throw "浏览器拒绝了剪贴板访问";
         encoder.showToast("✅ 已复制视频链接");
       } catch (e) {
@@ -3113,17 +3321,15 @@
       }
     },
 
+    // [4.5] 改用 getVideoMarkdownLink，避免重复拼接
     async copyVideoLinkMarkdown(btn) {
       if (btn) {
         btn.style.pointerEvents = "none";
         btn.style.opacity = "0.65";
       }
       try {
-        const url = this.getStandardVideoUrl();
-        if (!url) throw "无法获取视频链接";
-        const title = this.getCleanTitle();
-        const text = `[${title}](${url})`;
-        const ok = await this.copyTextToClipboard(text);
+        const { text } = this.getVideoMarkdownLink();
+        const ok = await utils.copy(text);
         if (!ok) throw "浏览器拒绝了剪贴板访问";
         encoder.showToast("✅ 已复制 Markdown 链接");
       } catch (e) {
@@ -3153,11 +3359,13 @@
 7. 用中文输出；
 8. 不要给笔记添加任何标签（Tag），例如 #健身、#Linux、#学习 等一律不要出现；也不要在文末追加标签行。
 9. 输出时，不要写诸如 LocalSend（字幕是 lock sand）这样的句段，直接写 LocalSend 就行（除非你非常不确定字幕到底是不是错的）
+10. 笔记开头必须原样输出视频信息行，格式严格为：> 视频：[视频标题](视频链接)。其中"视频标题"和"视频链接"必须直接使用输入信息中给出的"视频标题"和"视频链接"的值，不要改写标题、不要修改链接、不要拼接作者或 UP 主信息、不要换成别的标题或链接。示例：
+   > 视频：[这个作者居然用豆包做游戏?  ——[ 独游制作#15 ]](https://www.bilibili.com/video/BV1Tfgh68EpD)
 
 【建议的笔记结构（可灵活裁剪，视内容而定）】
 # 概要
-- 视频标题
-- 视频主题/核心问题（范例：第二故事设计困境、系统叙事、打破规则、开发经验教训）
+> 视频：[视频标题](视频链接)
+> 视频主题/核心问题（范例：第二故事设计困境、系统叙事、打破规则、开发经验教训）
 
 # 核心内容
 - 关键论点 / 知识点
@@ -3168,8 +3376,8 @@
 以下是范例：
 # AI 与自媒体：人机协作的实践与思考
 
-> 视频来源：B站 UP主“阿泰”（知识区）
-> 主题：AI 时代做视频还需要人吗？如何与 AI 相处？以及字节“吹work AI知识库”实战体验
+> 视频：[这个作者居然用豆包做游戏?  ——[ 独游制作#15 ]](https://www.bilibili.com/video/BV1Tfgh68EpD)
+> 主题：AI 时代做视频还需要人吗？如何与 AI 相处？以及字节"吹work AI知识库"实战体验
 
 ---
 
@@ -3182,7 +3390,7 @@
   - AI 知识区视频：一个人、一台电脑、一天可生产几十条，质量还不差。
 - **UP主的恐慌**：
   - 不用 AI，效率拼不过别人。
-  - 用 AI，担心内容变成标准答案，观点平均，人会不会“用废”。
+  - 用 AI，担心内容变成标准答案，观点平均，人会不会"用废"。
 
 ## 二、核心问题：把什么交给 AI，什么留给自己？
 
@@ -3191,11 +3399,11 @@
 - **人机协作原则**：
   - **AI 负责扩大可能性、激发问题**。
   - **人负责做出判断、决定相信什么、表达什么**。
-  - AI 是站在旁边的“他者”，不是直接给答案的先知。
+  - AI 是站在旁边的"他者"，不是直接给答案的先知。
 
 ## 三、Trae Work AI知识库：是什么？
 
-字节跳动旗下官方 AI 知识库，解决“AI 很强但不知道怎么用”的问题。
+字节跳动旗下官方 AI 知识库，解决"AI 很强但不知道怎么用"的问题。
 
 ### 主要内容板块
 
@@ -3216,10 +3424,10 @@
 - **步骤**：
   1. 让 Trae Work 分析账号和历史视频，总结重点深耕的 5 个行业/领域，给出视频数占比、总播放量（顺手完成账号复盘）。
   2. 生成行业热点日报（覆盖 5 大领域，38 条新闻），按实战指南提示词整理。
-  3. 让 AI 总结适合“阿泰”视频的选题判断标准（反直觉、悬念性、争议空间、产业链可拆解、深度数据实测、可支撑性）。
+  3. 让 AI 总结适合"阿泰"视频的选题判断标准（反直觉、悬念性、争议空间、产业链可拆解、深度数据实测、可支撑性）。
   4. 让 AI 给每个选题打分，筛选出得分最高的 3-5 个，输出标题雏形、一句话钩子、核心矛盾、大众入口、可深挖知识增量。
   5. 做成定时任务，每晚十点自动推送。
-- **结果**：得到一台“每天准时上菜的阿泰选题雷达”，稳定产出候选选题。
+- **结果**：得到一台"每天准时上菜的阿泰选题雷达"，稳定产出候选选题。
 
 ### 2. 选题体检器（进一步筛选）
 
@@ -3228,12 +3436,12 @@
   2. 整理数据、案例和观点，标注信息来源与可信度。
   3. 站在反方给逻辑和证据挑漏洞。
 - **成果**：生成研究底稿，含思维导图、数据表，指出关键盲区，重新定义选题。
-  案例：选题“网吧为什么又活过来了” → 快速生成底稿，判断是否值得做。
+  案例：选题"网吧为什么又活过来了" → 快速生成底稿，判断是否值得做。
 
 ### 3. 代码审查 skill
 
 - **问题**：不懂编程，AI 给代码声称算出了结果，但无法判断真伪。
-- **解决**：知识库推荐“代码审查 skill”，AI 写出代码后可调用该 skill 审查，找出 bug 和质量问题。
+- **解决**：知识库推荐"代码审查 skill"，AI 写出代码后可调用该 skill 审查，找出 bug 和质量问题。
 
 ### 4. 华语乐坛巅峰 skill
 
@@ -3258,7 +3466,7 @@
 
 ### 6. 工具资源推荐（精华）
 
-- **systematic debugging**：让 debug 从“问 AI 你错哪了”转变为系统性排查，三次修不好自动质疑思路，重新换方案。
+- **systematic debugging**：让 debug 从"问 AI 你错哪了"转变为系统性排查，三次修不好自动质疑思路，重新换方案。
 - **前端设计 skill**：摆脱 AI 生成界面的千篇一律（大黑底 + 几个颜色模块）。
 
 ## 五、总结与展望
@@ -3279,7 +3487,7 @@
 
 
 
-# 健身的“少即是多”：做得少反而更自律
+# 健身的"少即是多"：做得少反而更自律
 
 > 核心观点：每周练 6 天、把自己练到力竭，不一定有效；每周练 3 天、只做 5 个动作、留足恢复，反而进步更快。区别在于**懂得忽略什么**。
 
@@ -3316,8 +3524,8 @@
 
 - 休息越久，肌肉和力量增长越多。
 - 真正恢复后再做下一组，才能举得更重，进步更快。
-- 赶着做下一组的人只是累而已，却把这叫做“强度”。
-- 看起来毫不费力，其实是“偷懒式聪明”。
+- 赶着做下一组的人只是累而已，却把这叫做"强度"。
+- 看起来毫不费力，其实是"偷懒式聪明"。
 
 ---
 
@@ -3347,7 +3555,7 @@
 - 肌肉不是在健身房长出来的，是在睡觉时长出来的。
 - 睡得很差 → 身体进入损伤控制模式：肌肉更少、压力更大、疼痛更多。
 - 每周练 6 天但睡得很差的人：效果减半，力竭风险翻倍。
-- 7-8 小时睡眠是最“懒”的增肌方法，效果胜过任何补剂。
+- 7-8 小时睡眠是最"懒"的增肌方法，效果胜过任何补剂。
 - 别只花一小时优化训练计划，却把睡眠搞得一团糟。
 
 ---
@@ -3392,13 +3600,13 @@
 ## 核心问题与原理
 
 -   **现象**：放下手机后感到空虚，不自觉地又摸回去。
--   **本质**：不是意志力差，而是大脑被多巴胺劫持。短视频等高频刺激**调高了大脑的“刺激阈值”**，使其对低刺激的普通活动失去兴趣。
--   **解法**：不用意志力硬扛，而是给大脑一个**真实的“平替”**——能带来踏实满足感和长期回报的事。
+-   **本质**：不是意志力差，而是大脑被多巴胺劫持。短视频等高频刺激**调高了大脑的"刺激阈值"**，使其对低刺激的普通活动失去兴趣。
+-   **解法**：不用意志力硬扛，而是给大脑一个**真实的"平替"**——能带来踏实满足感和长期回报的事。
 
 ## 九件高回报小事清单
 
 ### 1. 🚶‍♀️ 出门散步
--   **原理**：斯坦福大学研究发现，走路能**提升创造力81%**，激活大脑产生灵感和整合记忆的“默认模式网络”。
+-   **原理**：斯坦福大学研究发现，走路能**提升创造力81%**，激活大脑产生灵感和整合记忆的"默认模式网络"。
 -   **做法**：不带目的出门走15-20分钟，手机开勿扰，边走边随便想。
 
 ### 2. ✍️ 写三行日记
@@ -3421,7 +3629,7 @@
 -   **做法**：花10分钟，整理一个抽屉或桌面。完成后大脑会获得真实的掌控感和成就感。
 
 ### 6. 💡 学一个微技能
--   **原理**：每次学会新东西，大脑都会经历微量的“突触重塑”，这是智识增长的底层机制。
+-   **原理**：每次学会新东西，大脑都会经历微量的"突触重塑"，这是智识增长的底层机制。
 -   **做法**：花5-10分钟，学一个单词、一段历史或一个吉他和弦。
 
 ### 7. 💌 发一条真诚的消息
@@ -3429,7 +3637,7 @@
 -   **做法**：真诚地想到一个人，发一句真心想说的话，而非群发。
 
 ### 8. ✅ 做一件拖延很久的小事
--   **原理**：心理学中的“蔡格尼克效应”指出，未完成的事会在潜意识里**持续消耗心理能量**。
+-   **原理**：心理学中的"蔡格尼克效应"指出，未完成的事会在潜意识里**持续消耗心理能量**。
 -   **做法**：把那件悬而未决的小事（回邮件、预约、还东西）做掉，如释重负。
 
 ### 9. 🧘 静坐5分钟
@@ -3461,167 +3669,19 @@
 5. 用户会依赖这些时间戳直接跳转到视频对应位置来进一步了解，所以
    时间戳的准确性和可读性都很重要。`,
 
-    async sendSubtitleToDeepSeek(btn) {
-      if (btn) {
-        btn.style.pointerEvents = "none";
-        btn.style.opacity = "0.65";
-      }
-      try {
-        encoder.showToast("正在获取字幕…");
-        const subtitle = await this.setupData();
-        if (!subtitle) throw "当前页面还没有读取到视频信息";
-        const languages = (subtitle.subtitles || []).filter(
-          (item) => item.lan !== "close" && item.lan !== "local",
-        );
-        if (!languages.length) throw "当前视频没有可用的在线字幕";
-        const lan =
-          encoder.currentLan &&
-          languages.some((item) => item.lan === encoder.currentLan)
-            ? encoder.currentLan
-            : languages[0].lan;
-        const data = await this.getSubtitle(lan);
-        if (!data || !Array.isArray(data.body) || !data.body.length)
-          throw "字幕内容为空";
-
-        const srt = encoder.encodeToSRT(data.body);
-        const title = this.getCleanTitle();
-        const lanDoc = (this.getSubtitleInfo(lan) || {}).lan_doc || lan;
-
-        const prompt =
-          this.OBSIDIAN_SKILL_PROMPT +
-          `\n\n===== 以下是要处理的视频字幕 =====\n视频标题：${title}\n字幕语言：${lanDoc}\n字幕条数：${data.body.length}\n\n` +
-          srt;
-
-        let stored = false;
-        try {
-          if (typeof GM_setValue === "function") {
-            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
-            stored = true;
-          }
-        } catch (e) {}
-        await this.copyTextToClipboard(prompt);
-        if (typeof GM_openInTab !== "undefined") {
-          GM_openInTab("https://chat.deepseek.com/", { active: true });
-        } else {
-          window.open("https://chat.deepseek.com/", "_blank");
-        }
-        encoder.showToast(
-          stored
-            ? "✅ 已打开 DeepSeek，正在自动发送字幕…"
-            : "✅ 已复制字幕并打开 DeepSeek，请粘贴发送",
-        );
-      } catch (e) {
-        console.error("发送字幕到 DeepSeek 失败", e);
-        encoder.showToast(`❌ 发送失败：${e}`, "error");
-      } finally {
-        if (btn) {
-          btn.style.pointerEvents = "";
-          btn.style.opacity = "";
-        }
-      }
-    },
-
-    async sendSubtitleToDeepSeekWithTimestamps(btn) {
-      if (btn) {
-        btn.style.pointerEvents = "none";
-        btn.style.opacity = "0.65";
-      }
-      try {
-        encoder.showToast("正在获取字幕…");
-        const subtitle = await this.setupData();
-        if (!subtitle) throw "当前页面还没有读取到视频信息";
-        const languages = (subtitle.subtitles || []).filter(
-          (item) => item.lan !== "close" && item.lan !== "local",
-        );
-        if (!languages.length) throw "当前视频没有可用的在线字幕";
-        const lan =
-          encoder.currentLan &&
-          languages.some((item) => item.lan === encoder.currentLan)
-            ? encoder.currentLan
-            : languages[0].lan;
-        const data = await this.getSubtitle(lan);
-        if (!data || !Array.isArray(data.body) || !data.body.length)
-          throw "字幕内容为空";
-
-        const timestamped = this.formatSubtitleWithTimestamps(data.body);
-        const title = this.getCleanTitle();
-        const lanDoc = (this.getSubtitleInfo(lan) || {}).lan_doc || lan;
-
-        const prompt =
-          this.OBSIDIAN_SKILL_PROMPT +
-          this.OBSIDIAN_TIMESTAMP_EXTRA +
-          `\n\n===== 以下是要处理的视频字幕（每条均带时间戳）=====\n视频标题：${title}\n字幕语言：${lanDoc}\n字幕条数：${data.body.length}\n\n` +
-          timestamped;
-
-        let stored = false;
-        try {
-          if (typeof GM_setValue === "function") {
-            GM_setValue(DS_STORAGE_KEY, { text: prompt, ts: Date.now() });
-            stored = true;
-          }
-        } catch (e) {}
-        await this.copyTextToClipboard(prompt);
-        if (typeof GM_openInTab !== "undefined") {
-          GM_openInTab("https://chat.deepseek.com/", { active: true });
-        } else {
-          window.open("https://chat.deepseek.com/", "_blank");
-        }
-        encoder.showToast(
-          stored
-            ? "✅ 已打开 DeepSeek，正在自动发送带时间戳的字幕…"
-            : "✅ 已复制字幕并打开 DeepSeek，请粘贴发送",
-        );
-      } catch (e) {
-        console.error("发送带时间戳字幕到 DeepSeek 失败", e);
-        encoder.showToast(`❌ 发送失败：${e}`, "error");
-      } finally {
-        if (btn) {
-          btn.style.pointerEvents = "";
-          btn.style.opacity = "";
-        }
-      }
-    },
-
+    // [4.1] 时间戳格式化统一走 utils.fmtTime(sec, "MMSS")
     formatSubtitleWithTimestamps(body) {
-      const pad = (n) => String(n).padStart(2, "0");
       return body
         .map(({ from, content }) => {
-          const total = Math.max(0, Math.floor(Number(from) || 0));
-          const h = Math.floor(total / 3600);
-          const m = Math.floor((total % 3600) / 60);
-          const s = total % 60;
-          const time =
-            h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+          const time = utils.fmtTime(from, "MMSS");
           return `[${time}] ${String(content || "").replace(/\n/g, " ")}`;
         })
         .join("\n");
     },
 
-    async copyTextToClipboard(text) {
-      try {
-        if (typeof GM_setClipboard !== "undefined") {
-          GM_setClipboard(text, "text");
-          return true;
-        }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(text);
-          return true;
-        }
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        ta.style.top = "0";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        const ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-        return ok;
-      } catch (e) {
-        console.error("剪贴板写入失败", e);
-        return false;
-      }
+    // [4.1] 剪贴板统一走 utils.copy（保留方法名，避免大量调用点修改）
+    copyTextToClipboard(text) {
+      return utils.copy(text);
     },
 
     showFloatingButtonMenu(x, y) {
@@ -3699,6 +3759,7 @@
       );
     },
 
+    // [4.4] 修复：defaults 只继承 aid（保证请求参数完整），绝不继承 bvid / cid / ep_id
     getBatchItems() {
       const state = this.window.__INITIAL_STATE__ || {};
       const videoData = state.videoData || this.getInfo("videoData") || {};
@@ -3709,6 +3770,7 @@
         ep_id: this.epid,
         title: this.getInfo("h1Title") || document.title,
       };
+      const inherited = { aid: current.aid };
       const normalize = (raw, index, defaults = {}) => {
         if (!raw) return null;
         const source = raw.episode || raw.video || raw;
@@ -3768,7 +3830,7 @@
                   ?.textContent?.trim() || node.textContent?.trim(),
             },
             index,
-            current,
+            inherited,
           ),
         )
         .filter(Boolean);
@@ -3794,7 +3856,7 @@
         collectionRaw.push(...collection.episodes);
       const collectionItems = unique(
         collectionRaw
-          .map((item, index) => normalize(item, index, current))
+          .map((item, index) => normalize(item, index, inherited))
           .filter(Boolean),
       );
       if (collectionItems.length)
@@ -3807,7 +3869,7 @@
       const pageItems = Array.isArray(pages)
         ? unique(
             pages
-              .map((item, index) => normalize(item, index, current))
+              .map((item, index) => normalize(item, index, inherited))
               .filter(Boolean),
           )
         : [];
@@ -3829,7 +3891,7 @@
       const seasonItems = Array.isArray(seasonEpisodes)
         ? unique(
             seasonEpisodes
-              .map((item, index) => normalize(item, index, current))
+              .map((item, index) => normalize(item, index, inherited))
               .filter(Boolean),
           )
         : [];
@@ -3839,7 +3901,7 @@
           items: seasonItems,
         };
 
-      const currentItem = normalize(current, 0, current);
+      const currentItem = normalize(current, 0, {});
       return { label: "当前视频", items: currentItem ? [currentItem] : [] };
     },
     getBatchLanguageOptions() {
@@ -3858,76 +3920,35 @@
       });
       return result;
     },
+    // [4.2] 走 biliApi.fetchSubtitleConfig，只过滤掉无 subtitle_url 的项
     async fetchBatchSubtitleConfig(item) {
-      const paramsObj = {};
-      if (item.cid) paramsObj.cid = String(item.cid);
-      else if (item.ep_id) paramsObj.ep_id = String(item.ep_id);
-      if (item.aid) paramsObj.aid = String(item.aid);
-      else if (item.bvid) paramsObj.bvid = String(item.bvid);
-      if (!Object.keys(paramsObj).length) throw "缺少视频参数";
-
-      // cid 场景走 WBI 签名接口；ep_id 场景保留原不签名路径
-      let url;
-      if (item.cid) {
-        const signedQuery = await this.signWbiQuery(paramsObj);
-        url = `https://api.bilibili.com/x/player/wbi/v2?${signedQuery}`;
-      } else {
-        const query = Object.entries(paramsObj)
-          .map(
-            ([k, v]) =>
-              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
-          )
-          .join("&");
-        url = `https://api.bilibili.com/x/player/v2?${query}`;
-      }
-      let ret = await fetch(url, { credentials: "include" }).then((res) =>
-        res.json(),
-      );
-      let subtitle;
-      if (ret.code === -404 && item.cid) {
-        const dmParams = item.aid
-          ? `aid=${encodeURIComponent(item.aid)}`
-          : `bvid=${encodeURIComponent(item.bvid || "")}`;
-        ret = await fetch(
-          `https://api.bilibili.com/x/v2/dm/view?${dmParams}&oid=${encodeURIComponent(item.cid)}&type=1`,
-          { credentials: "include" },
-        ).then((res) => res.json());
-        if (ret.code !== 0) throw ret.message || "无法读取字幕配置";
-        subtitle = ret.data?.subtitle;
-      } else {
-        if (ret.code !== 0 || !ret.data?.subtitle)
-          throw ret.message || `读取字幕配置失败（${ret.code}）`;
-        subtitle = ret.data.subtitle;
-      }
-      const subtitles = (subtitle?.subtitles || []).filter(
-        (info) =>
-          info.lan !== "close" && info.lan !== "local" && info.subtitle_url,
+      const config = await biliApi.fetchSubtitleConfig({
+        cid: item.cid,
+        aid: item.aid,
+        bvid: item.bvid,
+        ep_id: item.ep_id,
+      });
+      const subtitles = (config.subtitles || []).filter(
+        (info) => info.subtitle_url,
       );
       if (!subtitles.length) throw "该集没有可下载字幕";
       return { subtitles };
     },
+    // [4.2] 走 biliApi.fetchSubtitleBody（URL 规范化 + res.ok + 结构校验统一）
     async fetchBatchSubtitle(item, language) {
       const config = await this.fetchBatchSubtitleConfig(item);
       const info =
         language === "__auto__"
           ? config.subtitles[0]
           : config.subtitles.find((subtitle) => subtitle.lan === language);
-      if (!info) throw `没有语言为“${language}”的字幕`;
-      const subtitleUrl = new URL(
-        String(info.subtitle_url).replace(/^https?:\/\//, "//"),
-        location.href,
-      ).href;
-      const response = await fetch(subtitleUrl);
-      if (!response.ok && response.status !== 0)
-        throw `字幕请求失败（${response.status}）`;
-      const data = await response.json();
-      if (!data || !Array.isArray(data.body)) throw "字幕数据格式错误";
+      if (!info) throw `没有语言为"${language}"的字幕`;
+      const data = await biliApi.fetchSubtitleBody(info.subtitle_url);
       return { data, language: info.lan_doc || info.lan };
     },
     encodeBatchSubtitle(data, type, title) {
       switch (String(type).toUpperCase()) {
         case "ASS":
-          return encoder.encodeToASS(data.body, title); //传每集标题
+          return encoder.encodeToASS(data.body, title);
         case "SRT":
           return encoder.encodeToSRT(data.body);
         case "LRC":
@@ -4080,8 +4101,10 @@
             const extension = String(type).toLowerCase();
             entries.push({
               index,
-              name: `${String(index + 1).padStart(2, "0")}_${this.safeBatchName(item.title)}.${extension}`,
-              content: this.encodeBatchSubtitle(result.data, type, item.title), // ← 加 item.title
+              name: `${String(index + 1).padStart(2, "0")}_${this.safeBatchName(
+                item.title,
+              )}.${extension}`,
+              content: this.encodeBatchSubtitle(result.data, type, item.title),
             });
           } catch (error) {
             failed.push({ index, message: `${item.title}：${error}` });
@@ -4427,14 +4450,15 @@
         })
         .catch((e) => bilibiliCCHelper.toast("获取字幕失败", e));
     },
+    // [4.2] 走 biliApi.fetchSubtitleBody（URL 规范化 + res.ok + 结构校验统一）
     async getSubtitle(lan, name) {
       if (this.datas[lan]) return this.datas[lan];
       const item = this.getSubtitleInfo(lan, name);
       if (!item) throw "找不到所选语言字幕" + lan;
       if (this.datas[item.lan]) return this.datas[item.lan];
-      return fetch(item.subtitle_url)
-        .then((res) => res.json())
-        .then((data) => (this.datas[item.lan] = data));
+      const data = await biliApi.fetchSubtitleBody(item.subtitle_url);
+      this.datas[item.lan] = data;
+      return data;
     },
     getSubtitleInfo(lan, name) {
       return this.subtitle.subtitles.find(
@@ -4442,17 +4466,15 @@
       );
     },
     getInfo(name) {
-      return (
-        this.window[name] ||
-        (this.window.__INITIAL_STATE__ &&
-          this.window.__INITIAL_STATE__[name]) ||
-        (this.window.__INITIAL_STATE__ &&
-          this.window.__INITIAL_STATE__.epInfo &&
-          this.window.__INITIAL_STATE__.epInfo[name]) ||
-        (this.window.__INITIAL_STATE__ &&
-          this.window.__INITIAL_STATE__.videoData &&
-          this.window.__INITIAL_STATE__.videoData[name])
-      );
+      const w = this.window;
+      if (w[name] != null) return w[name];
+      const s = w.__INITIAL_STATE__;
+      if (s) {
+        if (s[name] != null) return s[name];
+        if (s.epInfo?.[name] != null) return s.epInfo[name];
+        if (s.videoData?.[name] != null) return s.videoData[name];
+      }
+      return undefined;
     },
     getEpid() {
       return (
@@ -4512,74 +4534,6 @@
       return this.getInfo("aid") || this.aid;
     },
 
-    async fetchWbiKeys() {
-      const res = await fetch("https://api.bilibili.com/x/web-interface/nav", {
-        credentials: "include",
-      });
-      if (res.status !== 200) {
-        throw new Error("nav 接口请求失败: " + res.status);
-      }
-      const data = await res.json();
-      if (!data || !data.data || !data.data.wbi_img) {
-        throw new Error("nav 接口返回异常: " + JSON.stringify(data));
-      }
-      const { img_url, sub_url } = data.data.wbi_img;
-      return {
-        img_key: img_url.slice(
-          img_url.lastIndexOf("/") + 1,
-          img_url.lastIndexOf("."),
-        ),
-        sub_key: sub_url.slice(
-          sub_url.lastIndexOf("/") + 1,
-          sub_url.lastIndexOf("."),
-        ),
-      };
-    },
-
-    _wbiKeysPromise: null, // 新增
-
-    async getWbiKeys() {
-      const now = Date.now();
-      if (this._wbiKeys && now - this._wbiKeysTime < this.WBI_KEYS_TTL) {
-        return this._wbiKeys;
-      }
-      // 已经有请求在飞，直接复用，避免并发重复请求
-      if (this._wbiKeysPromise) {
-        return this._wbiKeysPromise;
-      }
-      this._wbiKeysPromise = this.fetchWbiKeys()
-        .then((keys) => {
-          this._wbiKeys = keys;
-          this._wbiKeysTime = Date.now();
-          return keys;
-        })
-        .finally(() => {
-          this._wbiKeysPromise = null;
-        });
-      return this._wbiKeysPromise;
-    },
-
-    async signWbiQuery(params) {
-      try {
-        const keys = await this.getWbiKeys();
-        return wbiGetSignedQuery(params, keys.img_key, keys.sub_key);
-      } catch (e) {
-        console.warn("[BiliTK] WBI 签名失败，降级为不签名请求", e);
-        if (!this._wbiWarned) {
-          this._wbiWarned = true;
-          if (typeof encoder !== "undefined" && encoder.showToast) {
-            encoder.showToast("⚠️ WBI 签名失败，已降级为不签名请求", "error");
-          }
-        }
-        return Object.entries(params)
-          .map(
-            ([k, v]) =>
-              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
-          )
-          .join("&");
-      }
-    },
-
     setupData(force) {
       const currentPcid = this.getEpInfo();
       if (this.subtitle && this.pcid == currentPcid && !force)
@@ -4602,6 +4556,7 @@
       return p;
     },
 
+    // [4.2] 走 biliApi.fetchSubtitleConfig；WBI/-404/URL 规范化全部内聚到 biliApi
     async _setupDataImpl(force) {
       if (location.pathname == "/blackboard/html5player.html") {
         let match = location.search.match(/cid=(\d+)/i);
@@ -4623,71 +4578,30 @@
         ],
       };
 
-      //原本为：if (!force) this.datas = { close: { body: [] }, local: { body: [] } };
-      // 清掉在线字幕缓存（防止 force 刷新后拿到旧字幕），
-      // 但保留 close 兜底值和用户已加载的本地字幕
+      // 清掉在线字幕缓存，保留本地字幕
       const prevLocal = this.datas?.local || { body: [] };
       this.datas = { close: { body: [] }, local: prevLocal };
-
       decoder.data = undefined;
 
-      // 组装请求参数
-      const playerParams = {};
-      if (this.cid) playerParams.cid = this.cid;
-      else playerParams.ep_id = this.epid;
-      if (this.aid) playerParams.aid = this.aid;
-      else playerParams.bvid = this.bvid;
+      const config = await biliApi.fetchSubtitleConfig({
+        cid: this.cid,
+        aid: this.aid,
+        bvid: this.bvid,
+        ep_id: this.epid,
+      });
 
-      // cid 场景走 WBI 签名接口；ep_id 场景保留原不签名路径
-      let playerApiUrl;
-      if (this.cid) {
-        const signedQuery = await this.signWbiQuery(playerParams);
-        playerApiUrl = `https://api.bilibili.com/x/player/wbi/v2?${signedQuery}`;
-      } else {
-        const query = Object.entries(playerParams)
-          .map(
-            ([k, v]) =>
-              `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`,
-          )
-          .join("&");
-        playerApiUrl = `https://api.bilibili.com/x/player/v2?${query}`;
-      }
-      const res = await fetch(playerApiUrl, { credentials: "include" });
-      if (res.status != 200) throw "请求字幕配置失败:" + res.statusText;
-      const ret = await res.json();
-
-      if (ret.code == -404) {
-        const res2 = await fetch(
-          `//api.bilibili.com/x/v2/dm/view?${this.aid ? `aid=${this.aid}` : `bvid=${this.bvid}`}&oid=${this.cid}&type=1`,
-          { credentials: "include" },
-        );
-        const ret2 = await res2.json();
-        if (ret2.code != 0) throw "无法读取本视频APP字幕配置" + ret2.message;
-        this.subtitle = (ret2.data && ret2.data.subtitle) || { subtitles: [] };
-        this.subtitle.count = this.subtitle.subtitles.length;
-        this.subtitle.subtitles.forEach(
-          (item) =>
-            (item.subtitle_url = item.subtitle_url.replace(
-              /https?:\/\//,
-              "//",
-            )),
-        );
-        this.subtitle.subtitles.push(
+      const online = config.subtitles || [];
+      this.subtitle = {
+        count: online.length,
+        subtitles: [
+          ...online,
           { lan: "close", lan_doc: "关闭" },
           { lan: "local", lan_doc: "本地字幕" },
-        );
-        this.subtitle.allow_submit = false;
-        return this.subtitle;
+        ],
+      };
+      if (config.allow_submit !== undefined) {
+        this.subtitle.allow_submit = config.allow_submit;
       }
-
-      if (ret.code != 0 || !ret.data || !ret.data.subtitle)
-        throw "读取视频字幕配置错误:" + ret.code + ret.message;
-      this.subtitle = ret.data.subtitle;
-      this.subtitle.count = this.subtitle.subtitles.length;
-      this.subtitle.subtitles.push(
-        { lan: "close", lan_doc: "关闭" },
-        { lan: "local", lan_doc: "本地字幕" },
-      );
       return this.subtitle;
     },
 
