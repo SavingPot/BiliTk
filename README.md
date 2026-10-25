@@ -125,7 +125,10 @@ ps aux | grep server.py
 
 **2. 看它的实时日志（比如有没有报错）**
 ```bash
-tail -f /mnt/superfast/Projects/Tools/Python/bili-tk-asr/asr.log
+./launch_asr.sh
+
+#或使用下面这个，但不推荐
+#tail -f /mnt/superfast/Projects/Tools/Python/bili-tk-asr/asr.log
 ```
 
 **3. 怎么关掉它？**
