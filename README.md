@@ -1,92 +1,123 @@
-# BiliTk——Bilibili Toolkit 是什么
-这是一个基于油猴脚本的B站助手，主要功能是：
-- 字幕下载（无字幕时，可退回到本地字幕识别（ASR））
-- 基于字幕的视频 AI 总结/辅助（可以选择是否带有对应时间）
-- 视频精简链接复制
-- 视频链接的 Markdown 格式复制
+# BiliTk — Bilibili Toolkit
 
-<br>
+> 一款基于油猴脚本的 B 站助手：下载字幕、用 AI 把视频变成可读笔记、一键复制干净链接。
 
-该脚本由 [SavingPot](https://space.bilibili.com/515982690) 开发，是一款基于 GPL3.0 协议的自由软件，如果程序有问题，欢迎提出 Issue，或是 Fork 后发起 Pull Request 合并仓库。 <br>
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
+[![UserScript](https://img.shields.io/badge/UserScript-Tampermonkey%20%7C%20Violentmonkey-orange.svg)](https://www.tampermonkey.net/)
 
+BiliTk 由 [SavingPot](https://space.bilibili.com/515982690) 开发，基于 GPL-3.0 协议开源。遇到问题欢迎提 Issue，或 Fork 后发起 Pull Request。
 
-<br>
-<br>
+---
 
-# 一. 特别之处（以及为什么要自己开发一个脚本）
-1. 该脚本的总结功能与常见的 B 站助手的区别是，它适合用来直接生成可复制的完整笔记，而不是没用的视频目录。它完全基于字幕来总结，并且会自动修正字幕，生成的内容可以直接作为笔记复制，没有常规助手那样的突兀字幕与图片。
-2. 本脚本的宗旨是极致快捷，所以按钮默认不折叠、不隐藏，而是完整显示，而且绝大多数的按钮只要轻点一下即可完成所有操作。
-3. 如今有用的文章越来越少，而依赖视频和AI的人越来越多。许多视频本可以作为一个文章发布，但却为了迎合用户需求做成了视频，而这个脚本就可以帮助你把视频变成文章或笔记，让你快速看完改视频。当然，一个深度的视频并不输给文字，所以如果视频的内容很好，那么也建议你看完原视频。
-4. 过去我经常堆积几十几百个视频，但永远没有时间看，而借助这个工具，我观看这些视频的速度快了好几倍，这是因为很多视频其实就是更适合做成一篇博客用来阅读。使用这个工具，让学习变得更费力一点（看视频毕竟是轻松），但要速度快了好几倍！（当然，并不是所有视频都适合这么做，这需要你自行斟酌）
-5. 人类和AI一样，都有工作记忆机制。很多时候我会发现，自己看一个视频，明明每一部分说的都很有道理，但是当我看完视频以后我却什么都没学到，感觉只是从脑边划过。但转化为文章以后，信息被迅速而可控地呈现，一下就抓住了视频的核心——文章本身就是一篇纲要。
-6. 有的视频乍一看很有用，但花时间看完后才发现其实并没有什么价值，感觉时间全都浪费了，而这个脚本就解决了这个问题——看完文章版，就可以轻松地知道这个视频值不值得看。
-7. 为了达成这个目的，我最开始的工作流是：复制字幕 ➡️ 打开一个 DeepSeek 标签页 ➡️ 粘贴字幕。而这个脚本的作用就是让这个流程变成只要点击一下按钮。
+## 目录
 
-<br>
-<br>
+- [功能特性](#功能特性)
+- [快速开始](#快速开始)
+  - [1. 安装用户脚本](#1-安装用户脚本)
+  - [2. （可选）配置本地 ASR 语音识别](#2-可选配置本地-asr-语音识别)
+  - [3. 使用](#3-使用)
+- [设计理念](#设计理念)
+- [工作原理与安全性](#工作原理与安全性)
+- [常见问题 FAQ](#常见问题-faq)
+- [贡献](#贡献)
+- [License](#license)
+- [致谢](#致谢)
 
-# 二. 安装方法
-## 1. 插件本体的安装
-### 方法一. 手动安装（目前只支持手动安装）
-#### 安装脚本
-1. 安装用户脚本管理器（此处以 Tampermonkey 为例），例如 [Tampermonkey](https://www.tampermonkey.net/) 和 [Violentmonkey](https://violentmonkey.github.io/)。
-2. 浏览器可能会默认限制 Tampermonkey 的功能，所以要先在拓展管理中，打开 Tampermonkey 的设置界面，点击允许运行用户脚本。
-3. 打开管理器，选择“新建脚本”。
-4. 删除编辑器中的默认内容（务必注意，是所有内容！包括注释！）
-5. 将 [BiliTk.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js) 里的文本全部复制进去。（务必注意，是全部文本，全部文本，全部文本！！！包括注释，包括注释，包括注释！！！！！！！！）
-5. 保存脚本并启用。（务必不要忘记这一步！！）
+---
 
+## 功能特性
 
+| 功能 | 说明 |
+| --- | --- |
+| **字幕下载** | 一键下载当前视频的 CC 字幕；无字幕时可退回本地 ASR 识别 |
+| **AI 总结 / 辅助** | 基于字幕生成可直接复制的完整笔记，可选择是否保留时间戳 |
+| **精简链接复制** | 复制去除追踪参数的视频链接 |
+| **Markdown 链接复制** | 复制为 `[标题](链接)` 格式，方便贴进笔记 |
+| **本地 ASR 兜底** | UP 主关闭 CC 字幕时，可在本地把音频转成字幕 |
 
-## 2. （可选）ASR 功能（语音模型）的安装
+适用于绝大多数 B 站页面：普通视频页、收藏列表播放页、稍后再看页等。
 
-有些视频 UP 主关闭了 CC 字幕，所以没法直接总结，那么就需要在本地进行语音转字幕。由于用户脚本的权限有限，所以需要连接外部程序，这里我使用的是 [Bili2Text](https://github.com/SavingPot/bili-tk-asr)，因此需要配置 Python 环境
+---
 
-### ①配置 UV
+## 快速开始
 
-首先需要检查是否有 uv（Python 的一种 Rust 重写的高效包管理器）。如果没有的话，运行以下指令来运行官方的安装脚本（注意：这一步可能很慢，所以尽量挂梯子，或使用镜像源）：
+### 1. 安装用户脚本
 
-#### Linux 用户
+目前仅支持手动安装。
+
+1. 安装用户脚本管理器，例如 [Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)。
+2. 浏览器默认可能限制用户脚本运行。请在扩展管理页打开 Tampermonkey 的设置，允许运行用户脚本。
+3. 在管理器中点击“新建脚本”。
+4. **删除编辑器中的全部默认内容**（包括注释）。
+5. 打开 [BiliTk.user.js](https://github.com/SavingPot/BiliTk/blob/main/BiliTk.user.js)，**复制全部文本**（同样包括注释），粘贴进编辑器。
+6. 保存并启用脚本。
+
+> 第 4、5 步的“全部内容”很容易漏掉注释，请务必确认复制完整后再保存。
+
+---
+
+### 2. （可选）配置本地 ASR 语音识别
+
+只有需要处理“UP 主关闭了 CC 字幕”的视频时才需要这一步。用户脚本权限有限，无法直接在浏览器里跑语音模型，因此需要连接外部程序 [bili-tk-asr](https://github.com/SavingPot/bili-tk-asr)，并配置 Python 环境。
+
+#### ① 安装 uv
+
+`uv` 是用 Rust 重写的高效 Python 包管理器。先检查本机是否已安装：
+
+```bash
+uv --version
+```
+
+如果没有，执行官方安装脚本（网络较慢时建议挂代理或使用镜像源）：
+
+**Linux**
+
 ```bash
 wget -qO- https://astral.sh/uv/install.sh | sh
 
-#或 curl -LsSf https://astral.sh/uv/install.sh | sh
-#或镜像源 curl -LsSf https://gitee.com/wangnov/uv-custom/releases/download/0.9.22/uv-installer-custom.sh | sh
+# 或
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 或使用镜像源
+curl -LsSf https://gitee.com/wangnov/uv-custom/releases/download/0.9.22/uv-installer-custom.sh | sh
 ```
 
-#### Windows 用户
+**Windows**
 
-还没写
+暂未提供安装说明，欢迎贡献 PR。
 
+#### ② 安装 bili-tk-asr
 
-### ②配置 bili-tk-asr
+**方式 A：使用 Release 中的安装脚本**
 
-下载 bili-tk-asr 的 Release 并放在一个你希望的目录，然后在里面执行
+下载 [bili-tk-asr](https://github.com/SavingPot/bili-tk-asr) 的 Release，解压到任意目录，然后在该目录执行：
+
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
-或手动版
-```bash
-# 1. 克隆库
-git clone https://github.com/SavingPot/bili-tk-asr.git
 
-# 2. 进入目录
+**方式 B：手动安装**
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/SavingPot/bili-tk-asr.git
 cd bili-tk-asr
 
-# 3. 创建干净的 Python 3.12 虚拟环境
+# 2. 创建干净的 Python 3.12 虚拟环境
 uv venv --python 3.12
 source .venv/bin/activate
 
-# 4. 安装库
+# 3. 安装依赖
 uv pip install fastapi uvicorn python-multipart funasr_onnx modelscope
 
-# 💡 如果 funasr_onnx 报 BaseException 错误，直接强制覆盖为修复版：
+# 若 funasr_onnx 报 BaseException，强制安装修复版：
 # uv pip install --force-reinstall --no-deps "git+https://github.com/modelscope/FunASR.git#subdirectory=runtime/python/onnxruntime"
 
-# 5. 安装 asr 模型（这一步需要梯子）
+# 4. 下载 SenseVoiceSmall ONNX 模型（需要访问 Hugging Face）
 mkdir -p SenseVoiceSmall-onnx
 cd SenseVoiceSmall-onnx
+
 wget -O model_quant.onnx \
   https://huggingface.co/DennisHuang648/SenseVoiceSmall-onnx/resolve/main/model_quant.onnx
 wget -O chn_jpn_yue_eng_ko_spectok.bpe.model \
@@ -95,87 +126,110 @@ wget -O config.yaml \
   https://huggingface.co/DennisHuang648/SenseVoiceSmall-onnx/resolve/main/config.yaml
 wget -O tokens.json \
   https://huggingface.co/DennisHuang648/SenseVoiceSmall-onnx/resolve/main/tokens.json
-wget https://hf-mirror.com/FunAudioLLM/SenseVoiceSmall/resolve/main/am.mvn -P SenseVoiceSmall-onnx/
-mv model_quant.onnx model.onnx #伪装成全精度（FP32）的原始模型
+wget https://hf-mirror.com/FunAudioLLM/SenseVoiceSmall/resolve/main/am.mvn
+
+# 伪装成 FP32 原始模型
+mv model_quant.onnx model.onnx
+
+cd ..
 ```
 
+> **内存不足提示**：如果 ASR 运行到一半服务突然退出，通常是内存不足被系统杀掉。可增加音频切分次数以降低峰值负载。可用视频 [云飞聊Linux 字体比windows好](https://www.bilibili.com/video/BV1hZdLYyEEA) 测试 ASR 功能。
 
+首次运行时，浏览器会请求连接本地 ASR 服务，建议勾选“始终允许”：
 
-注意：如果在运行 ASR 的过程中，服务器突然自己关掉了，那么大概率是内存不足，导致进程被系统杀了，例如
+![首次运行时建议勾选“始终允许”](image.png)
+
+#### ③ 查看或关闭 ASR 服务
+
+自动启动的 `server.py` 是静默运行的。常用命令：
+
 ```bash
-开始识别音频: /tmp/tmp3u3_p9tk.m4s.wav
-savingpot@savingpot-Katana-GF66-11UC:~/Tools/bili-tk-asr$ 
-```
-这种情况通常发生在内存较小的机器上。如果遇到这种情况，就只能强制增加切分次数来确保负载平稳，
-
-可以用[云飞聊Linux 字体比windows好](https://www.bilibili.com/video/BV1hZdLYyEEA)来测试 ASR 功能。
-
-![第一次运行时，建议勾选始终允许](image.png)
-
-
-
-### ③🔍 如果想看 bili-tk-asr 在干什么，或者想关掉它，怎么办？
-自动启动的 server.py 是静默的。如果你希望调试它，可以这几个常用命令：
-
-**1. 看它在不在跑（状态）**
-```bash
+# 查看是否在运行
 ps aux | grep server.py
-```
-如果有输出，说明正在后台运行。
 
-**2. 看它的实时日志（比如有没有报错）**
-```bash
+# 查看实时日志（推荐）
 ./launch_asr.sh
 
-#或使用下面这个，但不推荐
-#tail -f /mnt/superfast/Projects/Tools/Python/bili-tk-asr/asr.log
-```
-
-**3. 怎么关掉它？**
-```bash
+# 关闭服务
 pkill -f "bili-tk-asr/server.py"
-```
 
-**4. 可以不静默打开，而是手动、非静默地启动服务器**
-先确保没有正在运行的 server.py，然后先定位到 bili-tk-asr 文件夹，然后运行
-```bash
+# 手动、非静默地启动服务（先确保没有正在运行的 server.py）
+cd bili-tk-asr
 uv run server.py
 ```
 
+---
 
-<br>
-<br>
+### 3. 使用
 
-# 三. 使用方法
+打开任意 B 站视频页，使用右上角的 BiliTk 按钮即可。字幕下载、AI 总结、链接复制等操作均为单击完成。
 
-打开任意一个 B 站视频，就可以使用右上角的按钮了！
+---
 
-<br>
-<br>
+## 设计理念
 
-# 四. 工作原理
-1. 脚本下载字幕的过程中内置限流、抖动等安全功能。<br>
-2. 发送到 DeepSeek 功能是把 Skill 和字幕内容一起发送给 DeepSeek 网页端，原理是模拟用户的点击、粘贴、回车等等，因此风险相对较低。
-3. 适用于绝大多数的 B 站页面，无论是普通页面，收藏列表播放页面还是稍后再看页面都可以。
+BiliTk 和常见的 B 站助手有几个不同点：
 
-<br>
-<br>
+1. **面向笔记，而不是视频目录。** 总结完全基于字幕，并会自动修正字幕，输出可直接复制的完整笔记，不会插入突兀的字幕截图或图片。
+2. **极致快捷。** 按钮默认展开、不折叠、不隐藏；绝大多数操作点一下就能完成。
+3. **把“本可以写成文章的视频”变成文章。** 很多视频的信息密度更适合阅读。用 BiliTk 先读文章版，可以快速判断视频是否值得完整观看；深度内容仍建议看原片。
+4. **对抗“看完即忘”。** 视频是线性播放的，看完容易只留下模糊印象；转成文字纲要后，信息以可控的方式呈现，更容易抓住核心。
+5. **减少工作流摩擦。** 过去需要“复制字幕 → 打开 DeepSeek → 粘贴”，现在只需点击一次按钮。
 
-# 五. 注意
-1. 本工具仅供个人学习使用，不得商用。
-2. 有条件的用户请使用 BYOK 以支持国内的 AI 发展。
-3. 目前 AI 总结仅支持 DeepSeek。
-4. 本脚本原理上不会造成数据丢失等后果，但如果有各种相关后果，用户自行承担。
-5. 本脚本安全无毒，也欢迎使用 AI 审查。
+---
 
-<br>
-<br>
+## 工作原理与安全性
 
-# 六. 特别鸣谢
-- 来自 [BiliClipper](https://github.com/echore/bili-clipper) 的灵感启发
-- 来自 [Bilibili CC Subtitle Tool](https://github.com/WanderLandWalker/Bilibili-CC-Subtitle-Tool) 的字幕下载部分脚本
-- 来自 [kaixinol](https://update.greasyfork.org/scripts/580254/1837601/Bilibili%20WBI%20Signer%20Library.js) 的 WBI 签名代码
+- 字幕下载内置限流与随机抖动，避免请求过于频繁。
+- “发送到 DeepSeek”是把预设 Skill 与字幕内容一起发送到 DeepSeek 网页端，通过模拟用户点击、粘贴、回车完成，不调用非公开接口，风险相对较低。
+- 脚本本身不收集、不上传用户数据；ASR 服务运行在本地。
+- 脚本开源，欢迎自行审查代码。
 
+---
 
-如果该脚本帮助到了你，请务必给一个免费的 Star！
+## 常见问题 FAQ
 
+**Q：脚本按钮没有出现？**
+A：确认脚本已在 Tampermonkey / Violentmonkey 中启用，并检查浏览器是否允许该扩展运行用户脚本。刷新视频页后重试。
+
+**Q：AI 总结失败怎么办？**
+A：目前 AI 总结仅支持 DeepSeek。请确认已登录 DeepSeek 网页端，并检查网络是否可正常访问。模拟操作依赖页面结构，若 DeepSeek 改版可能导致暂时失效，请提 Issue。
+
+**Q：ASR 服务运行中突然退出？**
+A：大概率是内存不足被系统终止。可增加音频切分次数，或换用内存更大的机器。
+
+**Q：如何关闭自动启动的 ASR 服务？**
+A：执行 `pkill -f "bili-tk-asr/server.py"`。
+
+**Q：支持其他 AI 吗？**
+A：目前仅支持 DeepSeek。有条件的用户建议使用 BYOK（Bring Your Own Key）方式，以支持国内 AI 生态发展。
+
+**Q：使用脚本会导致数据丢失吗？**
+A：脚本原理上不会造成数据丢失，但使用产生的相关后果由用户自行承担。
+
+---
+
+## 贡献
+
+- 发现问题：欢迎提交 [Issue](https://github.com/SavingPot/BiliTk/issues)。
+- 改进代码：Fork 仓库后发起 Pull Request。
+- 完善文档：尤其是 Windows 下的 ASR 安装步骤，欢迎补充。
+
+---
+
+## License
+
+本项目基于 [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) 协议开源。
+
+> 本工具仅供个人学习使用，不得商用。
+
+---
+
+## 致谢
+
+- 灵感来自 [BiliClipper](https://github.com/echore/bili-clipper)
+- 字幕下载部分参考 [Bilibili CC Subtitle Tool](https://github.com/WanderLandWalker/Bilibili-CC-Subtitle-Tool)
+- WBI 签名代码来自 [kaixinol](https://update.greasyfork.org/scripts/580254/1837601/Bilibili%20WBI%20Signer%20Library.js)
+
+如果 BiliTk 帮到了你，欢迎给项目点一个免费的 Star ⭐
