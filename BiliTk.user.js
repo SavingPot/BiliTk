@@ -3,7 +3,7 @@
 // @namespace    https://github.com/SavingPot/BiliTk
 // @updateURL    https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
 // @downloadURL  https://raw.githubusercontent.com/SavingPot/BiliTk/main/BiliTk.user.js
-// @version      1.5.4
+// @version      1.5.5
 // @description  详细介绍见 https://github.com/SavingPot/BiliTk
 // @author       SavingPot
 // @match        http*://www.bilibili.com/video/*
@@ -17,6 +17,8 @@
 // @match        http*://www.bilibili.com/medialist/play/ml*
 // @match        http*://www.bilibili.com/blackboard/html5player.html*
 // @match        https://chat.deepseek.com/*
+// @match        https://chatglm.cn/*
+// @match        https://www.chatglm.cn/*
 // @grant        GM_setClipboard
 // @grant        GM_addStyle
 // @grant        GM_registerMenuCommand
@@ -33,16 +35,64 @@
   "use strict";
 
   // ================================================================
-  // DeepSeek 页面侧：接收 B 站传来的字幕并【模拟用户】填入发送
+  // AI 页面侧：接收 B 站传来的字幕并【模拟用户】填入发送
+  // 支持 DeepSeek / 智谱清言，两者流程完全一致，仅服务商不同
   // ================================================================
-  const DS_STORAGE_KEY = "bilitk_deepseek_pending_v1";
+  const AI_PAGE_CONFIGS = {
+    deepseek: {
+      key: "deepseek",
+      name: "DeepSeek",
+      tag: "DS",
+      host: "chat.deepseek.com",
+      storageKey: "bilitk_deepseek_pending_v1",
+      url: "https://chat.deepseek.com/",
+      inputSelectors: [
+        "textarea#chat-input",
+        'textarea[placeholder*="DeepSeek"]',
+        'textarea[placeholder*="发送"]',
+        'textarea[placeholder*="输入"]',
+        "textarea",
+        '[contenteditable="true"]',
+      ],
+      sendSelectors: [
+        'div[role="button"].ds-icon-button',
+        'button[type="submit"]',
+        '[class*="send"]',
+      ],
+    },
+    zhipu: {
+      key: "zhipu",
+      name: "智谱清言",
+      tag: "ZP",
+      host: "chatglm.cn",
+      storageKey: "bilitk_zhipu_pending_v1",
+      url: "https://chatglm.cn/main/alltoolsdetail",
+      inputSelectors: [
+        'textarea[placeholder*="智谱"]',
+        'textarea[placeholder*="输入"]',
+        'textarea[placeholder*="发送"]',
+        'div[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
+        "textarea",
+      ],
+      sendSelectors: [
+        'button[type="submit"]',
+        '[aria-label*="发送"]',
+        '[title*="发送"]',
+        '[class*="send-btn"]',
+        '[class*="sendBtn"]',
+        '[class*="send-button"]',
+        '[class*="send"]',
+      ],
+    },
+  };
 
-  function handleDeepSeekPage() {
+  function handleAIPage(provider) {
     let pending = null;
     try {
       pending =
         typeof GM_getValue === "function"
-          ? GM_getValue(DS_STORAGE_KEY, null)
+          ? GM_getValue(provider.storageKey, null)
           : null;
     } catch (e) {
       pending = null;
@@ -51,7 +101,7 @@
 
     if (pending.ts && Date.now() - pending.ts > 50 * 60 * 1000) {
       try {
-        GM_deleteValue(DS_STORAGE_KEY);
+        GM_deleteValue(provider.storageKey);
       } catch (e) {}
       return;
     }
@@ -67,17 +117,29 @@
       if (timer) clearInterval(timer);
       if (tryTimer) clearTimeout(tryTimer);
       try {
-        GM_deleteValue(DS_STORAGE_KEY);
+        GM_deleteValue(provider.storageKey);
       } catch (e) {}
     };
 
-    const findInput = () =>
-      document.querySelector("textarea#chat-input") ||
-      document.querySelector('textarea[placeholder*="DeepSeek"]') ||
-      document.querySelector('textarea[placeholder*="发送"]') ||
-      document.querySelector('textarea[placeholder*="输入"]') ||
-      document.querySelector("textarea") ||
-      document.querySelector('[contenteditable="true"]');
+    const findInput = () => {
+      for (const selector of provider.inputSelectors) {
+        const el = document.querySelector(selector);
+        if (el) return el;
+      }
+      return null;
+    };
+
+    const isUsableButton = (btn) =>
+      !!btn &&
+      btn.getAttribute("aria-disabled") !== "true" &&
+      !btn.disabled;
+
+    const getButtonHint = (btn) =>
+      `${btn.getAttribute("aria-label") || ""} ${
+        btn.getAttribute("title") || ""
+      } ${typeof btn.className === "string" ? btn.className : ""} ${
+        btn.id || ""
+      }`.toLowerCase();
 
     const findSendButton = (input) => {
       let node = input.parentElement;
@@ -85,12 +147,26 @@
         const candidates = node.querySelectorAll(
           'div[role="button"], button, .ds-icon-button',
         );
+        let fallback = null;
         for (const btn of candidates) {
-          if (btn.getAttribute("aria-disabled") === "true") continue;
-          if (btn.disabled) continue;
-          if (btn.querySelector("svg")) return btn;
+          if (!isUsableButton(btn)) continue;
+          if (!btn.querySelector("svg")) continue;
+          const hint = getButtonHint(btn);
+          if (
+            hint.includes("send") ||
+            hint.includes("发送") ||
+            hint.includes("submit")
+          )
+            return btn;
+          if (!fallback) fallback = btn;
         }
+        if (fallback) return fallback;
         node = node.parentElement;
+      }
+      for (const selector of provider.sendSelectors || []) {
+        for (const btn of document.querySelectorAll(selector)) {
+          if (isUsableButton(btn)) return btn;
+        }
       }
       return null;
     };
@@ -117,7 +193,10 @@
         sel.addRange(range);
         return document.execCommand("insertText", false, text);
       } catch (e) {
-        console.warn("[BiliTK→DS] value setter 注入失败，尝试 execCommand", e);
+        console.warn(
+          `[BiliTK→${provider.tag}] value setter 注入失败，尝试 execCommand`,
+          e,
+        );
       }
       try {
         input.focus();
@@ -130,7 +209,7 @@
         }
         return document.execCommand("insertText", false, text);
       } catch (e) {
-        console.error("[BiliTK→DS] execCommand 也失败", e);
+        console.error(`[BiliTK→${provider.tag}] execCommand 也失败`, e);
         return false;
       }
     };
@@ -167,7 +246,7 @@
         input.dispatchEvent(buildEnterEvent("keypress"));
         input.dispatchEvent(buildEnterEvent("keyup"));
       } catch (e) {
-        console.warn("[BiliTK→DS] 模拟 Enter 失败", e);
+        console.warn(`[BiliTK→${provider.tag}] 模拟 Enter 失败`, e);
       }
       setTimeout(() => {
         const stillHasText =
@@ -179,24 +258,9 @@
         if (sendBtn) {
           sendBtn.click();
         } else {
-          const fakeClick = (el) => {
-            ["mousedown", "mouseup", "click"].forEach((t) =>
-              el.dispatchEvent(
-                new MouseEvent(t, {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window,
-                }),
-              ),
-            );
-          };
-          const guess =
-            document.querySelector('div[role="button"].ds-icon-button') ||
-            document.querySelector('button[type="submit"]') ||
-            document.querySelector('[class*="send"]');
-          if (guess) fakeClick(guess);
-          else
-            console.warn("[BiliTK→DS] 找不到发送按钮，也无法通过 Enter 发送");
+          console.warn(
+            `[BiliTK→${provider.tag}] 找不到发送按钮，也无法通过 Enter 发送`,
+          );
         }
       }, 1000);
     };
@@ -213,7 +277,7 @@
           : input.innerText || input.textContent || "";
       if (!actual.trim()) {
         console.warn(
-          "[BiliTK→DS] 输入框是空的，DeepSeek 可能换了输入框结构",
+          `[BiliTK→${provider.tag}] 输入框是空的，${provider.name} 可能换了输入框结构`,
           input,
         );
       }
@@ -227,8 +291,13 @@
     tryTimer = setTimeout(tryInject, 1200);
   }
 
-  if (location.hostname === "chat.deepseek.com") {
-    handleDeepSeekPage();
+  const aiPageConfig = Object.values(AI_PAGE_CONFIGS).find(
+    (provider) =>
+      location.hostname === provider.host ||
+      location.hostname.endsWith("." + provider.host),
+  );
+  if (aiPageConfig) {
+    handleAIPage(aiPageConfig);
     return;
   }
 
@@ -2419,7 +2488,7 @@
   // ============================================================
   // bilibiliCCHelper：控制器
   // [4.2] WBI + 字幕请求 → biliApi
-  // [4.3] 3 个 DeepSeek 发送函数 → _sendToDeepSeek / _deliverToDeepSeek
+  // [4.3] AI 发送函数 → _sendToAI / _deliverToAI（DeepSeek / 智谱清言共用）
   // [4.4] getBatchItems 默认值修复
   // [4.5] 抽出 getVideoMarkdownLink，标题+链接统一由它生成
   // 已删除：_asrDsWindow / _wbiKeys / _wbiKeysTime / _wbiKeysPromise /
@@ -2443,6 +2512,26 @@
 
     DEEPSEEK_WHALE_SVG:
       '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"></path></svg>',
+
+    ZHIPU_SVG:
+      '<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M11 2.5l1.9 5.1 5.1 1.9-5.1 1.9L11 16.5 9.1 11.4 4 9.5l5.1-1.9L11 2.5z"/><path d="M18.5 13.6l.95 2.55L22 17.1l-2.55.95L18.5 20.6l-.95-2.55L15 17.1l2.55-.95.95-2.55z"/></svg>',
+
+    getProviderConfig(providerKey) {
+      return AI_PAGE_CONFIGS[providerKey];
+    },
+
+    getProviderIcon(providerKey) {
+      return providerKey === "zhipu"
+        ? this.ZHIPU_SVG
+        : this.DEEPSEEK_WHALE_SVG;
+    },
+
+    getLocalAsrButtonMarkup(providerKey) {
+      return (
+        this.getProviderIcon(providerKey) +
+        '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>'
+      );
+    },
 
     registerMenuCommands() {
       if (
@@ -2482,24 +2571,33 @@
       if (el) el.remove();
     },
 
-    // [4.3] 新增：统一的 DeepSeek 投递入口（存 → 复制 → 打开 tab → 提示）
-    async _deliverToDeepSeek(promptText, okMsg) {
+    // 统一的 AI 投递入口（存 → 复制 → 打开 tab → 提示）
+    async _deliverToAI(providerKey, promptText, okMsg) {
+      const provider = this.getProviderConfig(providerKey);
       let stored = false;
       try {
         if (typeof GM_setValue === "function") {
-          GM_setValue(DS_STORAGE_KEY, { text: promptText, ts: Date.now() });
+          GM_setValue(provider.storageKey, { text: promptText, ts: Date.now() });
           stored = true;
         }
       } catch (e) {}
       await utils.copy(promptText);
       if (typeof GM_openInTab !== "undefined") {
-        GM_openInTab("https://chat.deepseek.com/", { active: true });
+        GM_openInTab(provider.url, { active: true });
       } else {
-        window.open("https://chat.deepseek.com/", "_blank");
+        window.open(provider.url, "_blank");
       }
       encoder.showToast(
-        stored ? okMsg : "✅ 已复制内容并打开 DeepSeek，请粘贴发送",
+        stored ? okMsg : `✅ 已复制内容并打开 ${provider.name}，请粘贴发送`,
       );
+    },
+
+    async _deliverToDeepSeek(promptText, okMsg) {
+      return this._deliverToAI("deepseek", promptText, okMsg);
+    },
+
+    async _deliverToZhipu(promptText, okMsg) {
+      return this._deliverToAI("zhipu", promptText, okMsg);
     },
 
     // [4.3] 新增：统一的"获取当前视频首选字幕数据"入口
@@ -2521,8 +2619,9 @@
       return { data, lan };
     },
 
-    // [4.3] 新增：统一的"发送字幕到 DeepSeek"入口（普通 / 带时间戳共用）
-    async _sendToDeepSeek({ btn, withTimestamp }) {
+    // 统一的"发送字幕到 AI"入口（普通 / 带时间戳共用，服务商无关）
+    async _sendToAI(providerKey, { btn, withTimestamp }) {
+      const provider = this.getProviderConfig(providerKey);
       if (btn) {
         btn.style.pointerEvents = "none";
         btn.style.opacity = "0.65";
@@ -2551,14 +2650,15 @@
             `${meta}\n\n` +
             srt;
         }
-        await this._deliverToDeepSeek(
+        await this._deliverToAI(
+          providerKey,
           prompt,
           withTimestamp
-            ? "✅ 已打开 DeepSeek，正在自动发送带时间戳的字幕…"
-            : "✅ 已打开 DeepSeek，正在自动发送字幕…",
+            ? `✅ 已打开 ${provider.name}，正在自动发送带时间戳的字幕…`
+            : `✅ 已打开 ${provider.name}，正在自动发送字幕…`,
         );
       } catch (e) {
-        console.error("发送字幕到 DeepSeek 失败", e);
+        console.error(`发送字幕到 ${provider.name} 失败`, e);
         encoder.showToast(`❌ 发送失败：${e}`, "error");
       } finally {
         if (btn) {
@@ -2570,15 +2670,25 @@
 
     // 保留原入口签名，内部走统一流程
     async sendSubtitleToDeepSeek(btn) {
-      return this._sendToDeepSeek({ btn, withTimestamp: false });
+      return this._sendToAI("deepseek", { btn, withTimestamp: false });
     },
     async sendSubtitleToDeepSeekWithTimestamps(btn) {
-      return this._sendToDeepSeek({ btn, withTimestamp: true });
+      return this._sendToAI("deepseek", { btn, withTimestamp: true });
+    },
+    async sendSubtitleToZhipu(btn) {
+      return this._sendToAI("zhipu", { btn, withTimestamp: false });
+    },
+    async sendSubtitleToZhipuWithTimestamps(btn) {
+      return this._sendToAI("zhipu", { btn, withTimestamp: true });
     },
 
-    async sendLocalAsrToDeepSeekClean(btn) {
+    async sendLocalAsrToAI(providerKey, btn) {
+      const provider = this.getProviderConfig(providerKey);
       if (!btn) {
-        btn = this.localAsrDeepseekButton;
+        btn =
+          providerKey === "zhipu"
+            ? this.localAsrZhipuButton
+            : this.localAsrDeepseekButton;
         if (!btn) {
           encoder.showToast("❌ 找不到本地识别按钮", "error");
           return;
@@ -2607,15 +2717,21 @@
           this._currentTaskId = null;
         }
         btn.dataset.running = "0";
-        btn.innerHTML =
-          this.DEEPSEEK_WHALE_SVG +
-          '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>';
+        btn.innerHTML = this.getLocalAsrButtonMarkup(providerKey);
         btn.style.background = "linear-gradient(135deg,#2e7d32,#43a047)";
         encoder.showToast("🛑 已取消本地识别", "error");
         return;
       }
 
       // ================= 启动逻辑 =================
+      const otherProviderButton =
+        providerKey === "zhipu"
+          ? this.localAsrDeepseekButton
+          : this.localAsrZhipuButton;
+      if (otherProviderButton && otherProviderButton.dataset.running === "1") {
+        encoder.showToast("另一个本地识别任务正在运行，请先取消", "error");
+        return;
+      }
       btn.dataset.running = "1";
       btn.innerHTML =
         '<span style="font-size:12px;font-weight:bold;">取消</span>';
@@ -2660,59 +2776,49 @@
           throw e;
         }
 
-        // 4. 心跳检测
-        encoder.showToast("正在检查本地服务状态…");
-        let isServerRunning = false;
+        // 4. 拉起本地服务，起不来再报错（浏览器无法检测 .desktop，只能尝试唤起）
+        encoder.showToast("正在启动本地服务…");
         try {
-          await new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-              method: "GET",
-              url: "http://127.0.0.1:8001/docs",
-              timeout: 2000,
-              onload: () => resolve(),
-              onerror: () => reject(),
-              ontimeout: () => reject(),
-            });
-          });
-          isServerRunning = true;
-        } catch (e) {
-          isServerRunning = false;
-        }
-
-        // 5. 唤醒本地服务
-        if (!isServerRunning) {
-          encoder.showToast("正在唤醒本地服务，请在弹出的提示中点击允许…");
           window.open("bili-asr://start", "_blank");
-
-          let wakeSuccess = false;
-          for (let i = 0; i < 15; i++) {
-            await new Promise((r) => setTimeout(r, 2000));
-            if (btn.dataset.running !== "1") throw "用户取消";
-            try {
-              await new Promise((resolve, reject) => {
-                GM_xmlhttpRequest({
-                  method: "GET",
-                  url: "http://127.0.0.1:8001/docs",
-                  timeout: 1000,
-                  onload: () => resolve(),
-                  onerror: () => reject(),
-                  ontimeout: () => reject(),
-                });
-              });
-              wakeSuccess = true;
-              break;
-            } catch (e) {
-              this.updateProgressUI(`等待本地服务启动… (${(i + 1) * 2}s)`);
-            }
-          }
-
-          if (!wakeSuccess) {
-            throw "❌ 自动唤醒失败，请确认浏览器已允许打开外部应用，或手动运行 server.py";
-          }
-          encoder.showToast("✅ 服务已成功唤醒");
+        } catch (e) {
+          // window.open 可能被拦截，但 bili-asr:// 通常仍能触发外部程序
         }
 
-        // 6. 提交任务
+        let wakeSuccess = false;
+        for (let i = 0; i < 15; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          if (btn.dataset.running !== "1") throw "用户取消";
+          try {
+            await new Promise((resolve, reject) => {
+              GM_xmlhttpRequest({
+                method: "GET",
+                url: "http://127.0.0.1:8001/api/health",
+                timeout: 1500,
+                onload: (r) => {
+                  if (r.status !== 200) return reject();
+                  try {
+                    const d = JSON.parse(r.responseText);
+                    if (d && d.service === "bili-tk-asr") return resolve();
+                    reject();
+                  } catch (e) { reject(); }
+                },
+                onerror: () => reject(),
+                ontimeout: () => reject(),
+              });
+            });
+            wakeSuccess = true;
+            break;
+          } catch (e) {
+            this.updateProgressUI(`等待本地服务启动… (${(i + 1) * 2}s)`);
+          }
+        }
+
+        if (!wakeSuccess) {
+          throw "❌ 本地服务启动失败，请检查：\n• bili-asr:// 协议是否注册（运行 ./install.sh -y）\n• launch_asr.sh 是否可执行（ls -l /mnt/projects/Tools/Python/bili-tk-asr/launch_asr.sh）\n• asr.log 是否有报错（tail -50 /mnt/projects/Tools/Python/bili-tk-asr/asr.log）";
+        }
+        encoder.showToast("✅ 本地服务已启动");
+
+        // 5. 提交任务
         this.showProgressUI("发送给本地识别中...");
         const formData = new FormData();
         formData.append("file", audioBlob, "audio.m4s");
@@ -2843,7 +2949,11 @@
           `\n\n===== 以下是要处理的视频字幕（由本地语音识别生成）=====\n视频标题：${title}\n视频链接：${url}\n字幕来源：纯本地 SenseVoice 识别（可能有识别错误，请在整理时酌情修正）\n\n` +
           text;
 
-        await this._deliverToDeepSeek(prompt, "✅ 已跳转 DeepSeek 自动发送…");
+        await this._deliverToAI(
+          providerKey,
+          prompt,
+          `✅ 已跳转 ${provider.name} 自动发送…`,
+        );
       } catch (e) {
         console.error("纯本地识别失败", e);
         this.hideProgressUI();
@@ -2855,12 +2965,121 @@
         this._asrAbortController = null;
         if (btn) {
           btn.dataset.running = "0";
-          btn.innerHTML =
-            this.DEEPSEEK_WHALE_SVG +
-            '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>';
+          btn.innerHTML = this.getLocalAsrButtonMarkup(providerKey);
           btn.style.background = "linear-gradient(135deg,#2e7d32,#43a047)";
         }
       }
+    },
+
+    async sendLocalAsrToDeepSeekClean(btn) {
+      return this.sendLocalAsrToAI("deepseek", btn);
+    },
+
+    async sendLocalAsrToZhipuClean(btn) {
+      return this.sendLocalAsrToAI("zhipu", btn);
+    },
+
+    _createAiFloatButton(providerKey, variant, parent) {
+      const provider = this.getProviderConfig(providerKey);
+      const icon = this.getProviderIcon(providerKey);
+      const ids = {
+        deepseek: {
+          normal: "cc-subtitle-deepseek-trigger",
+          timestamp: "cc-subtitle-deepseek-ts-trigger",
+          local: "cc-subtitle-local-asr-deepseek-trigger",
+        },
+        zhipu: {
+          normal: "cc-subtitle-zhipu-trigger",
+          timestamp: "cc-subtitle-zhipu-ts-trigger",
+          local: "cc-subtitle-local-asr-zhipu-trigger",
+        },
+      };
+      const palettes = {
+        deepseek: {
+          normal: [
+            "linear-gradient(135deg,#4d6bfe,#6b83ff)",
+            "rgba(77,107,254,0.35)",
+            "rgba(77,107,254,0.55)",
+          ],
+          timestamp: [
+            "linear-gradient(135deg,#2b3cc9,#4d6bfe)",
+            "rgba(43,60,201,0.4)",
+            "rgba(43,60,201,0.6)",
+          ],
+          local: [
+            "linear-gradient(135deg,#2e7d32,#43a047)",
+            "rgba(46,125,50,0.4)",
+            "rgba(46,125,50,0.6)",
+          ],
+        },
+        zhipu: {
+          normal: [
+            "linear-gradient(135deg,#1f6bff,#4d9bff)",
+            "rgba(31,107,255,0.35)",
+            "rgba(31,107,255,0.55)",
+          ],
+          timestamp: [
+            "linear-gradient(135deg,#1746c2,#1f6bff)",
+            "rgba(23,70,194,0.4)",
+            "rgba(23,70,194,0.6)",
+          ],
+          local: [
+            "linear-gradient(135deg,#2e7d32,#43a047)",
+            "rgba(46,125,50,0.4)",
+            "rgba(46,125,50,0.6)",
+          ],
+        },
+      };
+      const [background, shadow, hoverShadow] =
+        palettes[providerKey][variant];
+      const titles = {
+        normal: `把当前视频的字幕发送给 ${provider.name}，自动整理成 Obsidian 笔记`,
+        timestamp: `把字幕发送给 ${provider.name}，并在笔记中标注时间戳，方便回看视频`,
+        local: `用本地 SenseVoice 识别字幕，然后发送给 ${provider.name} 整理成笔记\n（需要先在本地运行 bili-tk-asr）`,
+      };
+      let innerHTML = icon;
+      if (variant === "timestamp") {
+        innerHTML +=
+          '<span style="position:absolute;bottom:2px;right:3px;font-size:9px;font-weight:700;background:#ffd54f;color:#1e2f9c;padding:0 3px;border-radius:6px;line-height:12px;">T</span>';
+      } else if (variant === "local") {
+        innerHTML +=
+          '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>';
+      }
+      const positionStyle =
+        variant === "normal"
+          ? "font-weight:700;font-size:15px;letter-spacing:.5px;font-family:Arial,sans-serif;"
+          : "position:relative;";
+      const btn = elements.createAs(
+        "div",
+        {
+          id: ids[providerKey][variant],
+          style:
+            `width:44px;height:44px;background:${background};border-radius:12px;box-shadow:0 4px 14px ${shadow};cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;` +
+            positionStyle +
+            "user-select:none;-webkit-tap-highlight-color:transparent;transition:transform .15s, box-shadow .15s;",
+          innerHTML,
+          title: titles[variant],
+          onmouseenter: function () {
+            this.style.transform = "scale(1.1)";
+            this.style.boxShadow = `0 6px 20px ${hoverShadow}`;
+          },
+          onmouseleave: function () {
+            this.style.transform = "scale(1)";
+            this.style.boxShadow = `0 4px 14px ${shadow}`;
+          },
+          onclick:
+            variant === "local"
+              ? (ev) => this.sendLocalAsrToAI(providerKey, ev.currentTarget)
+              : this.guardSubtitleAction((ev) => {
+                  this._sendToAI(providerKey, {
+                    btn: ev.currentTarget,
+                    withTimestamp: variant === "timestamp",
+                  });
+                }),
+        },
+        parent,
+      );
+      return btn;
     },
 
     createFloatingButton() {
@@ -2884,7 +3103,7 @@
         {
           id: "cc-subtitle-float-container",
           style:
-            "position:fixed;top:110px;right:24px;z-index:1048577;display:flex;flex-direction:column;gap:8px;",
+            "position:fixed;top:110px;right:24px;z-index:1048577;display:flex;flex-direction:column;align-items:flex-end;gap:8px;",
         },
         document.body,
       );
@@ -2895,9 +3114,9 @@
           {
             id: "cc-float-btn-style",
             innerHTML:
-              "#cc-subtitle-float-container>div{transition:transform .15s,box-shadow .15s,opacity .2s,filter .2s;}" +
-              "#cc-subtitle-float-container>div.cc-float-btn-disabled{opacity:.38!important;filter:grayscale(1)!important;cursor:not-allowed!important;box-shadow:0 2px 6px rgba(0,0,0,.15)!important;}" +
-              "#cc-subtitle-float-container>div.cc-float-btn-disabled:hover{transform:none!important;box-shadow:0 2px 6px rgba(0,0,0,.15)!important;}",
+              "#cc-subtitle-float-container div{transition:transform .15s,box-shadow .15s,opacity .2s,filter .2s;}" +
+              "#cc-subtitle-float-container div.cc-float-btn-disabled{opacity:.38!important;filter:grayscale(1)!important;cursor:not-allowed!important;box-shadow:0 2px 6px rgba(0,0,0,.15)!important;}" +
+              "#cc-subtitle-float-container div.cc-float-btn-disabled:hover{transform:none!important;box-shadow:0 2px 6px rgba(0,0,0,.15)!important;}",
           },
           document.head,
         );
@@ -3010,81 +3229,66 @@
         this.floatButtonContainer,
       );
 
-      // 5. 发送在线字幕到 DeepSeek
-      this.deepseekFloatButton = elements.createAs(
+      // 5. AI 按钮区：左列 DeepSeek，右列智谱清言
+      // 智谱清言沿用原 DeepSeek 的位置，DeepSeek 整体左移一列
+      this.aiButtonGroup = elements.createAs(
         "div",
         {
-          id: "cc-subtitle-deepseek-trigger",
+          id: "cc-subtitle-ai-button-group",
           style:
-            "width:44px;height:44px;background:linear-gradient(135deg,#4d6bfe,#6b83ff);border-radius:12px;box-shadow:0 4px 14px rgba(77,107,254,0.35);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;letter-spacing:.5px;font-family:Arial,sans-serif;user-select:none;-webkit-tap-highlight-color:transparent;transition:transform .15s, box-shadow .15s;",
-          innerHTML: this.DEEPSEEK_WHALE_SVG,
-          title: "把当前视频的字幕发送给 DeepSeek，自动整理成 Obsidian 笔记",
-          onmouseenter: function () {
-            this.style.transform = "scale(1.1)";
-            this.style.boxShadow = "0 6px 20px rgba(77,107,254,0.55)";
-          },
-          onmouseleave: function () {
-            this.style.transform = "scale(1)";
-            this.style.boxShadow = "0 4px 14px rgba(77,107,254,0.35)";
-          },
-          onclick: self.guardSubtitleAction(function () {
-            self.sendSubtitleToDeepSeek(this);
-          }),
+            "display:flex;flex-direction:row;align-items:flex-start;gap:8px;",
         },
         this.floatButtonContainer,
       );
-
-      // 6. 发送在线字幕到 DeepSeek（带时间戳）
-      this.deepseekTimestampButton = elements.createAs(
+      const deepseekColumn = elements.createAs(
         "div",
         {
-          id: "cc-subtitle-deepseek-ts-trigger",
-          style:
-            "width:44px;height:44px;background:linear-gradient(135deg,#2b3cc9,#4d6bfe);border-radius:12px;box-shadow:0 4px 14px rgba(43,60,201,0.4);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;position:relative;user-select:none;-webkit-tap-highlight-color:transparent;transition:transform .15s, box-shadow .15s;",
-          innerHTML:
-            this.DEEPSEEK_WHALE_SVG +
-            '<span style="position:absolute;bottom:2px;right:3px;font-size:9px;font-weight:700;background:#ffd54f;color:#1e2f9c;padding:0 3px;border-radius:6px;line-height:12px;">T</span>',
-          title: "把字幕发送给 DeepSeek，并在笔记中标注时间戳，方便回看视频",
-          onmouseenter: function () {
-            this.style.transform = "scale(1.1)";
-            this.style.boxShadow = "0 6px 20px rgba(43,60,201,0.6)";
-          },
-          onmouseleave: function () {
-            this.style.transform = "scale(1)";
-            this.style.boxShadow = "0 4px 14px rgba(43,60,201,0.4)";
-          },
-          onclick: self.guardSubtitleAction(function () {
-            self.sendSubtitleToDeepSeekWithTimestamps(this);
-          }),
+          id: "cc-subtitle-deepseek-column",
+          style: "display:flex;flex-direction:column;gap:8px;",
         },
-        this.floatButtonContainer,
+        this.aiButtonGroup,
+      );
+      const zhipuColumn = elements.createAs(
+        "div",
+        {
+          id: "cc-subtitle-zhipu-column",
+          style: "display:flex;flex-direction:column;gap:8px;",
+        },
+        this.aiButtonGroup,
       );
 
-      // 7. 本地识别字幕发送到 DeepSeek（走 8001）
-      this.localAsrDeepseekButton = elements.createAs(
-        "div",
-        {
-          id: "cc-subtitle-local-asr-deepseek-trigger",
-          style:
-            "width:44px;height:44px;background:linear-gradient(135deg,#2e7d32,#43a047);border-radius:12px;box-shadow:0 4px 14px rgba(46,125,50,0.4);cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;position:relative;user-select:none;-webkit-tap-highlight-color:transparent;transition:transform .15s, box-shadow .15s;",
-          innerHTML:
-            this.DEEPSEEK_WHALE_SVG +
-            '<span style="position:absolute;bottom:1px;right:2px;font-size:8px;font-weight:700;line-height:11px;background:#fff;color:#2e7d32;padding:0 3px;border-radius:5px;box-shadow:0 1px 3px rgba(0,0,0,0.25);">本地</span>',
-          title:
-            "用本地 SenseVoice 识别字幕，然后发送给 DeepSeek 整理成笔记\n（需要先在本地运行 bili-tk-voice）",
-          onmouseenter: function () {
-            this.style.transform = "scale(1.1)";
-            this.style.boxShadow = "0 6px 20px rgba(46,125,50,0.6)";
-          },
-          onmouseleave: function () {
-            this.style.transform = "scale(1)";
-            this.style.boxShadow = "0 4px 14px rgba(46,125,50,0.4)";
-          },
-          onclick: function () {
-            self.sendLocalAsrToDeepSeekClean(this);
-          },
-        },
-        this.floatButtonContainer,
+      // DeepSeek（左列）
+      this.deepseekFloatButton = this._createAiFloatButton(
+        "deepseek",
+        "normal",
+        deepseekColumn,
+      );
+      this.deepseekTimestampButton = this._createAiFloatButton(
+        "deepseek",
+        "timestamp",
+        deepseekColumn,
+      );
+      this.localAsrDeepseekButton = this._createAiFloatButton(
+        "deepseek",
+        "local",
+        deepseekColumn,
+      );
+
+      // 智谱清言（右列，原 DeepSeek 位置）
+      this.zhipuFloatButton = this._createAiFloatButton(
+        "zhipu",
+        "normal",
+        zhipuColumn,
+      );
+      this.zhipuTimestampButton = this._createAiFloatButton(
+        "zhipu",
+        "timestamp",
+        zhipuColumn,
+      );
+      this.localAsrZhipuButton = this._createAiFloatButton(
+        "zhipu",
+        "local",
+        zhipuColumn,
       );
 
       this.applyFloatingButtonVisibility();
@@ -3119,6 +3323,8 @@
         this.copyFloatButton,
         this.deepseekFloatButton,
         this.deepseekTimestampButton,
+        this.zhipuFloatButton,
+        this.zhipuTimestampButton,
       ].filter(Boolean);
       buttons.forEach((btn) => {
         if (!btn.dataset.originalTitle) {
@@ -3295,7 +3501,7 @@
     // 注意：标题中若含半角 [ ] ( ) 会破坏 Markdown 链接结构，
     // 统一替换为中文全角符号（【 】（ ）），避免排版错乱。
     // 返回的 title 已经是净化后的版本，调用方把它塞进 Prompt 后
-    // DeepSeek 也会原样搬进 > 视频：[标题](链接)，同样安全。
+    // AI（DeepSeek / 智谱清言）也会原样搬进 > 视频：[标题](链接)，同样安全。
     getVideoMarkdownLink() {
       const url = this.getStandardVideoUrl();
       if (!url) throw "无法获取视频链接";
@@ -3741,6 +3947,13 @@
       addItem("复制当前 SRT 字幕", () => this.copyCurrentSubtitleSRT());
       addItem("复制视频链接", () => this.copyVideoLink());
       addItem("复制 Markdown 链接", () => this.copyVideoLinkMarkdown());
+      addItem("发送字幕到智谱清言", () => this.sendSubtitleToZhipu());
+      addItem("发送字幕到智谱清言（带时间戳）", () =>
+        this.sendSubtitleToZhipuWithTimestamps(),
+      );
+      addItem("本地识别字幕并发送智谱清言", () =>
+        this.sendLocalAsrToZhipuClean(this.localAsrZhipuButton),
+      );
       addItem("发送字幕到 DeepSeek", () => this.sendSubtitleToDeepSeek());
       addItem("发送字幕到 DeepSeek（带时间戳）", () =>
         this.sendSubtitleToDeepSeekWithTimestamps(),
@@ -3754,7 +3967,7 @@
       addItem("永久关闭悬浮按钮", () => this.hideFloatingButtonPermanently());
 
       const width = 210,
-        height = 122 + 36 * 5;
+        height = 122 + 36 * 8;
       menu.style.left =
         Math.max(8, Math.min(x, window.innerWidth - width - 8)) + "px";
       menu.style.top =
@@ -4171,7 +4384,7 @@
         "div",
         {
           style:
-            "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:680px;max-width:calc(100vw - 30px);box-sizing:border-box;padding:18px;background:#fff;border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.2);pointer-events:auto;color:#18191c;font-size:14px;",
+            "position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:900px;max-width:calc(100vw - 30px);box-sizing:border-box;padding:18px;background:#fff;border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.2);pointer-events:auto;color:#18191c;font-size:14px;",
         },
         overlay,
       );
@@ -4182,7 +4395,13 @@
           {
             id: "cc-batch-dialog-style",
             innerHTML:
-              "@media (max-width:720px){.cc-batch-control-panel{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr)!important}.cc-batch-control-panel>:nth-child(5){grid-column:1}.cc-batch-control-panel>:nth-child(6){grid-column:2}}",
+              "@media (max-width:720px){.cc-batch-control-panel{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr)!important}.cc-batch-control-panel>:nth-child(5){grid-column:1}.cc-batch-control-panel>:nth-child(6){grid-column:2}}" +
+              /* [多列] 选集列表由单列改为多列网格：默认 auto 用 auto-fill 按容器宽度自适应列数；
+                 手动指定列数时（data-cols）用 --cc-batch-cols 固定列数 */
+              ".cc-batch-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));column-gap:18px;row-gap:0;align-content:start;}" +
+              ".cc-batch-list[data-cols]{grid-template-columns:repeat(var(--cc-batch-cols,2),minmax(0,1fr));}" +
+              ".cc-batch-list .cc-batch-item{min-width:0;}" +
+              "@media (max-width:720px){.cc-batch-list,.cc-batch-list[data-cols]{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))!important}}",
           },
           document.head,
         );
@@ -4271,22 +4490,71 @@
         { innerText: "全选 / 取消全选", style: "margin-left:6px;" },
         selectionHeader,
       );
+      // [多列] 列数控制：自适应 / 1~6 列，选择结果记忆到 localStorage
+      const COLS_KEY = "bilibili_cc_batch_list_cols";
+      const COLS_OPTIONS = ["auto", "1", "2", "3", "4", "5", "6"];
+      elements.createAs("span", { style: "flex:1;" }, selectionHeader);
+      elements.createAs(
+        "span",
+        {
+          innerText: "列数：",
+          style: "color:#99a2aa;font-size:12px;margin-right:2px;",
+        },
+        selectionHeader,
+      );
+      const columnsSelect = elements.createAs(
+        "select",
+        {
+          title: "选集列表的显示列数（自适应会按窗口宽度自动决定）",
+          style:
+            "height:24px;max-width:88px;font-size:12px;border:1px solid #ccd0d7;border-radius:4px;background:#fff;",
+          innerHTML: COLS_OPTIONS.map(
+            (v) =>
+              `<option value="${v}">${v === "auto" ? "自适应" : v + " 列"}</option>`,
+          ).join(""),
+        },
+        selectionHeader,
+      );
+      let savedCols = "auto";
+      try {
+        savedCols = localStorage.getItem(COLS_KEY) || "auto";
+      } catch (e) {}
+      columnsSelect.value = COLS_OPTIONS.includes(savedCols)
+        ? savedCols
+        : "auto";
 
       const list = elements.createAs(
         "div",
         {
+          className: "cc-batch-list",
           style:
-            "max-height:280px;overflow:auto;border:1px solid #e5e9ef;border-top:0;padding:4px 8px;",
+            "max-height:360px;overflow:auto;border:1px solid #e5e9ef;border-top:0;padding:4px 8px;",
         },
         panel,
       );
+      const applyColumns = () => {
+        const value = columnsSelect.value;
+        if (value === "auto") {
+          list.removeAttribute("data-cols");
+          list.style.removeProperty("--cc-batch-cols");
+        } else {
+          list.setAttribute("data-cols", value);
+          list.style.setProperty("--cc-batch-cols", value);
+        }
+        try {
+          localStorage.setItem(COLS_KEY, value);
+        } catch (e) {}
+      };
+      columnsSelect.onchange = applyColumns;
+      applyColumns();
       const checks = [];
       items.forEach((item, index) => {
         const row = elements.createAs(
           "label",
           {
+            className: "cc-batch-item",
             style:
-              "display:flex;align-items:center;gap:7px;min-height:30px;border-bottom:1px solid #f1f2f3;cursor:pointer;",
+              "display:flex;align-items:center;gap:7px;min-height:30px;min-width:0;padding-right:6px;border-bottom:1px solid #f1f2f3;cursor:pointer;",
           },
           list,
         );
@@ -4303,7 +4571,9 @@
           "span",
           {
             innerText: `${index + 1}. ${item.title}`,
-            style: "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+            title: `${index + 1}. ${item.title}`,
+            style:
+              "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;",
           },
           row,
         );
