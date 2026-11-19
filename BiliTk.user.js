@@ -121,6 +121,7 @@
       } catch (e) {}
     };
 
+    // 寻找输入框
     const findInput = () => {
       for (const selector of provider.inputSelectors) {
         const el = document.querySelector(selector);
@@ -141,6 +142,7 @@
         btn.id || ""
       }`.toLowerCase();
 
+    // 寻找发送按钮
     const findSendButton = (input) => {
       let node = input.parentElement;
       for (let depth = 0; depth < 6 && node; depth++) {
@@ -239,21 +241,29 @@
       return ev;
     };
 
+    // 模拟用户点击发送
     const simulateSend = (input) => {
       try {
+        // 聚焦到输入框上，然后模拟点击回车
         input.focus();
         input.dispatchEvent(buildEnterEvent("keydown"));
         input.dispatchEvent(buildEnterEvent("keypress"));
         input.dispatchEvent(buildEnterEvent("keyup"));
       } catch (e) {
+        // 失败提醒
         console.warn(`[BiliTK→${provider.tag}] 模拟 Enter 失败`, e);
       }
       setTimeout(() => {
+        // 检测文本框里还有没有文本
         const stillHasText =
           input.tagName === "TEXTAREA" || input.tagName === "INPUT"
             ? input.value.trim().length > 0
             : (input.innerText || "").trim().length > 0;
+        
+        // 没有文本就是发送成功了，返回
         if (!stillHasText) return;
+
+        // 发送失败了，回退到电机发送按钮
         const sendBtn = findSendButton(input);
         if (sendBtn) {
           sendBtn.click();
@@ -454,8 +464,8 @@
   };
 
   // ============================================================
-  // [4.1] utils：统一工具层（DOM / 拖拽 / 剪贴板 / 时间 / Toast / 存储）
-  // 依赖方向：任何业务模块 → utils，utils 不依赖业务模块。
+  // utils：统一工具层（DOM / 拖拽 / 剪贴板 / 时间 / Toast / 存储）
+  // 依赖方向：utils 不依赖任何业务模块。
   // ============================================================
   const utils = {
     // ---------- DOM ----------
@@ -530,7 +540,7 @@
       };
     },
 
-    // ---------- 剪贴板 ----------
+    // ---------- 复制到剪贴板 ----------
     async copy(text) {
       try {
         if (typeof GM_setClipboard === "function") {
@@ -557,7 +567,7 @@
       }
     },
 
-    // ---------- 时间 ----------
+    // ---------- 字幕的时间编码 ----------
     // 统一替换 encoder.encodeTime / formatSubtitleWithTimestamps 内的重复逻辑
     fmtTime(sec, format = "SRT") {
       sec = Math.max(0, Number(sec) || 0);
@@ -899,10 +909,6 @@
 
   // ============================================================
   // encoder：字幕编码 + 下载/预览窗口 UI
-  // [4.1] 拖拽 → utils.makeDraggable
-  // [4.1] 复制 → utils.copy
-  // [4.1] 时间 → utils.fmtTime
-  // 已删除死字段：isDragging / dragOffsetX / dragOffsetY / initDragging / fallbackCopy
   // ============================================================
   const encoder = {
     assHead: [
@@ -916,8 +922,7 @@
       "ScaledBorderAndShadow: yes",
       "; ----------------------",
       "; 本字幕由CC字幕助手自动转换",
-      `; 字幕来源${document.location}`,
-      "; 脚本地址https://greasyfork.org/scripts/378513",
+      `; 字幕来源: ${document.location}`,
       "; 设置了字幕过长自动换行，但若字幕中没有空格换行将无效",
       "; 字体大小依据720p 48号字体等比缩放",
       "; 如显示不正常请尝试使用SRT格式",
@@ -937,7 +942,7 @@
     formatSelect: null,
     resizeContainer: null,
 
-    // 统一清理下载窗口：移除 document 监听器、释放 Blob URL、清空引用
+    // 清理下载窗口函数：移除 document 监听器、释放 Blob URL、清空引用
     _cleanupDialog() {
       if (typeof this._destroyDrag === "function") {
         this._destroyDrag();
@@ -970,6 +975,7 @@
       this.refreshButton = null;
     },
 
+    // 打开字幕下载窗口
     showDialog(data, download, lan) {
       if (!data || !(data.body instanceof Array)) throw "数据错误";
 
@@ -1220,6 +1226,7 @@
       this.updateDownload(type, download);
     },
 
+    // 更改要下载的字幕的语言版本
     changeLanguage(lan) {
       if (!lan || typeof bilibiliCCHelper === "undefined") return;
       this.currentLan = lan;
@@ -1239,6 +1246,7 @@
         });
     },
 
+    // 刷新当前字幕
     refreshCurrentSubtitle() {
       if (!this.currentLan || typeof bilibiliCCHelper === "undefined") return;
       if (this.languageStatus) this.languageStatus.innerText = "刷新中…";
@@ -1315,7 +1323,7 @@
       };
     },
 
-    // [4.1] 复制改用 utils.copy（保留按钮视觉反馈）
+    // 把内容复制到剪贴板
     copyToClipboard() {
       if (!this.textArea) return;
       const text = this.textArea.value;
@@ -1329,6 +1337,7 @@
       });
     },
 
+    // 显示复制成功的提示
     showCopySuccess() {
       this.showToast("✅ 复制成功！已保存到剪贴板");
       if (this.copyButton) {
@@ -1345,6 +1354,7 @@
       }
     },
 
+    // 展示提示的功能是在这里实现的
     showToast(message, type = "success") {
       const existing = document.querySelector(".copy-success-toast");
       if (existing) existing.remove();
@@ -1364,6 +1374,7 @@
       }, 2000);
     },
 
+    // 这里是各种编码
     updateDownload(type = "LRC", download) {
       if (!this.textArea || !this.actionButton || !this.openTabButton) return;
       let result;
@@ -1478,8 +1489,6 @@
 
   // ============================================================
   // decoder：本地字幕解码 + 本地字幕选择面板
-  // [4.1] 拖拽 → utils.makeDraggable
-  // 已删除死字段：isDragging / dragOffsetX / dragOffsetY / dialogMove
   // ============================================================
   const decoder = {
     srtReg:
@@ -1758,7 +1767,7 @@
 
   // ============================================================
   // oldPlayerHelper / player2x / player315 / player314
-  // 4 种播放器版本适配（本段未改动逻辑，保留原实现）
+  // 4 种播放器版本适配
   // ============================================================
   const oldPlayerHelper = {
     setting: undefined,
@@ -2491,8 +2500,6 @@
   // [4.3] AI 发送函数 → _sendToAI / _deliverToAI（DeepSeek / 智谱清言共用）
   // [4.4] getBatchItems 默认值修复
   // [4.5] 抽出 getVideoMarkdownLink，标题+链接统一由它生成
-  // 已删除：_asrDsWindow / _wbiKeys / _wbiKeysTime / _wbiKeysPromise /
-  //         _wbiWarned / WBI_KEYS_TTL / fetchWbiKeys / getWbiKeys / signWbiQuery
   // ============================================================
   const bilibiliCCHelper = {
     window: "undefined" == typeof unsafeWindow ? window : unsafeWindow,
@@ -2571,6 +2578,9 @@
       if (el) el.remove();
     },
 
+
+
+
     // 统一的 AI 投递入口（存 → 复制 → 打开 tab → 提示）
     async _deliverToAI(providerKey, promptText, okMsg) {
       const provider = this.getProviderConfig(providerKey);
@@ -2581,12 +2591,16 @@
           stored = true;
         }
       } catch (e) {}
+
       await utils.copy(promptText);
+
       if (typeof GM_openInTab !== "undefined") {
         GM_openInTab(provider.url, { active: true });
       } else {
         window.open(provider.url, "_blank");
       }
+
+      // 复制提示词失败的提示
       encoder.showToast(
         stored ? okMsg : `✅ 已复制内容并打开 ${provider.name}，请粘贴发送`,
       );
@@ -2979,6 +2993,7 @@
       return this.sendLocalAsrToAI("zhipu", btn);
     },
 
+    // 创建发送给 AI 的按钮
     _createAiFloatButton(providerKey, variant, parent) {
       const provider = this.getProviderConfig(providerKey);
       const icon = this.getProviderIcon(providerKey);
@@ -3032,11 +3047,14 @@
       };
       const [background, shadow, hoverShadow] =
         palettes[providerKey][variant];
+     
+      // 按钮的描述
       const titles = {
         normal: `把当前视频的字幕发送给 ${provider.name}，自动整理成 Obsidian 笔记`,
         timestamp: `把字幕发送给 ${provider.name}，并在笔记中标注时间戳，方便回看视频`,
         local: `用本地 SenseVoice 识别字幕，然后发送给 ${provider.name} 整理成笔记\n（需要先在本地运行 bili-tk-asr）`,
       };
+
       let innerHTML = icon;
       if (variant === "timestamp") {
         innerHTML +=
@@ -3082,6 +3100,7 @@
       return btn;
     },
 
+    // 创建炫富按钮（核心）
     createFloatingButton() {
       if (this.subtitleBatchButton) return;
       if (!document.body) {
@@ -3295,6 +3314,7 @@
       this.updateFloatButtonsAvailability(this.subtitle);
     },
 
+    // 检测有没有可用的字幕（没有的话就是被作者关闭了）
     hasAvailableSubtitle(subtitle) {
       if (!subtitle || !Array.isArray(subtitle.subtitles)) return false;
       return subtitle.subtitles.some(
@@ -3315,6 +3335,7 @@
       };
     },
 
+    // 刷新所有浮动按钮的可见性
     updateFloatButtonsAvailability(subtitle) {
       if (!subtitle) return;
       const hasSubtitle = this.hasAvailableSubtitle(subtitle);
@@ -3330,6 +3351,8 @@
         if (!btn.dataset.originalTitle) {
           btn.dataset.originalTitle = btn.title || "";
         }
+
+        // 有字幕则正常，无字幕则灰色
         if (hasSubtitle) {
           btn.classList.remove("cc-float-btn-disabled");
           btn.style.opacity = "";
@@ -3348,6 +3371,7 @@
       });
     },
 
+    // 检测网页是否全屏（在全屏的时候会自动隐藏悬浮按钮）
     isWebFullscreen() {
       if (document.fullscreenElement) return true;
       const bpx = document.querySelector(".bpx-player-container");
@@ -3422,6 +3446,8 @@
       this.toast("悬浮按钮已永久关闭，可从插件菜单重新打开");
     },
 
+    // 复制 SRT 格式的字幕（单独声明这个函数是因为快速按钮用的是他）
+    // 后期也可以加上其他字幕类型
     async copyCurrentSubtitleSRT(btn) {
       if (btn) {
         btn.style.pointerEvents = "none";
@@ -3484,6 +3510,7 @@
       return location.origin + pathname;
     },
 
+    // Get clean title, i.e. stripping "bilibili", "哔哩哔哩" and user name
     getCleanTitle() {
       let title =
         this.getInfo("h1Title") ||
@@ -3513,6 +3540,7 @@
       return { title: safeTitle, url, text: `[${safeTitle}](${url})` };
     },
 
+    // 获取视频的标准链接
     async copyVideoLink(btn) {
       if (btn) {
         btn.style.pointerEvents = "none";
