@@ -58,7 +58,7 @@ BiliTk 由 [SavingPot](https://space.bilibili.com/515982690) 开发，基于 GPL
 
 ### 2. （可选）配置本地 ASR 语音识别
 
-只有需要处理“UP 主关闭了 CC 字幕”的视频时才需要这一步。用户脚本权限有限，无法直接在浏览器里跑语音模型，因此需要连接外部程序 [bili-tk-asr](https://github.com/SavingPot/bili-tk-asr)，并配置 Python 环境。
+如果你看的视频没有自带的CC字幕，可以安装ASR服务来手动生成字幕。注：由于用户脚本权限有限，无法直接在浏览器里跑语音模型，因此需要连接外部程序 [bili-tk-asr](https://github.com/SavingPot/bili-tk-asr)，并配置 Python 环境。
 
 #### ① 安装 uv
 
