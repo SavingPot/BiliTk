@@ -88,6 +88,7 @@
   };
 
   function handleAIPage(provider) {
+    // 尝试获取 pending 的值
     let pending = null;
     try {
       pending =
@@ -97,8 +98,10 @@
     } catch (e) {
       pending = null;
     }
+
     if (!pending || !pending.text) return;
 
+    // 超时处理
     if (pending.ts && Date.now() - pending.ts > 50 * 60 * 1000) {
       try {
         GM_deleteValue(provider.storageKey);
@@ -112,6 +115,7 @@
     let timer = null;
     let tryTimer = null;
 
+    // 清理变量
     const cleanup = () => {
       done = true;
       if (timer) clearInterval(timer);
@@ -130,11 +134,13 @@
       return null;
     };
 
+    // 判断按钮是否可用
     const isUsableButton = (btn) =>
       !!btn &&
       btn.getAttribute("aria-disabled") !== "true" &&
       !btn.disabled;
 
+    // 获取按钮的提示信息
     const getButtonHint = (btn) =>
       `${btn.getAttribute("aria-label") || ""} ${btn.getAttribute("title") || ""
         } ${typeof btn.className === "string" ? btn.className : ""} ${btn.id || ""
@@ -173,6 +179,7 @@
 
     const simulateTyping = (input, text) => {
       try {
+        // 这里是正常的输入逻辑
         if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
           const proto =
             input.tagName === "TEXTAREA"
@@ -185,6 +192,8 @@
           input.dispatchEvent(new Event("change", { bubbles: true }));
           return true;
         }
+
+        // 不正常时的回退方式
         input.focus();
         const sel = window.getSelection();
         const range = document.createRange();
@@ -197,20 +206,22 @@
           `[BiliTK→${provider.tag}] value setter 注入失败，尝试 execCommand`,
           e,
         );
-      }
-      try {
-        input.focus();
-        if (
-          (input.tagName === "TEXTAREA" || input.tagName === "INPUT") &&
-          typeof input.setSelectionRange === "function"
-        ) {
-          const len = input.value.length;
-          input.setSelectionRange(len, len);
+
+        // 最后的兜底（几乎不会触发）
+        try {
+          input.focus();
+          if (
+            (input.tagName === "TEXTAREA" || input.tagName === "INPUT") &&
+            typeof input.setSelectionRange === "function"
+          ) {
+            const len = input.value.length;
+            input.setSelectionRange(len, len);
+          }
+          return document.execCommand("insertText", false, text);
+        } catch (e) {
+          console.error(`[BiliTK→${provider.tag}] execCommand 也失败`, e);
+          return false;
         }
-        return document.execCommand("insertText", false, text);
-      } catch (e) {
-        console.error(`[BiliTK→${provider.tag}] execCommand 也失败`, e);
-        return false;
       }
     };
 
