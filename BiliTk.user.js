@@ -1629,9 +1629,11 @@
       this.reader.readAsText(this.file, this.encoding);
     },
     handleSubtitle() {
+      // 无数据则返回
       if (!this.data) return;
       const offset = +this.offset.value;
       bilibiliCCHelper
+        // 按照偏移量读数据
         .updateLocal(
           !offset
             ? this.data
@@ -1644,17 +1646,23 @@
             },
         )
         .then(() => {
-          if ("function" == typeof this.statusHandler) this.statusHandler(true);
+          // 读完后尝试调用状态处理函数
+          if ("function" == typeof this.statusHandler)
+            this.statusHandler(true);
+
+          // 提示
           bilibiliCCHelper.toast(
-            `载入本地字幕:${this.file.name},共${this.data.body.length}行,偏移:${offset}s`,
+            `载入本地字幕:${this.file.name},共${this.data.body.length}行, 偏移:${offset}s`,
           );
         })
+        // 失败提示
         .catch((e) => {
           bilibiliCCHelper.toast("载入字幕失败", e);
         });
     },
     decodeFile() {
       try {
+        // 提取拓展名
         const type = this.file.name.split(".").pop().toLowerCase();
         switch (type) {
           case "lrc":
