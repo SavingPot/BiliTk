@@ -102,7 +102,7 @@
     if (pending.ts && Date.now() - pending.ts > 50 * 60 * 1000) {
       try {
         GM_deleteValue(provider.storageKey);
-      } catch (e) {}
+      } catch (e) { }
       return;
     }
 
@@ -118,7 +118,7 @@
       if (tryTimer) clearTimeout(tryTimer);
       try {
         GM_deleteValue(provider.storageKey);
-      } catch (e) {}
+      } catch (e) { }
     };
 
     // 寻找输入框
@@ -136,11 +136,9 @@
       !btn.disabled;
 
     const getButtonHint = (btn) =>
-      `${btn.getAttribute("aria-label") || ""} ${
-        btn.getAttribute("title") || ""
-      } ${typeof btn.className === "string" ? btn.className : ""} ${
-        btn.id || ""
-      }`.toLowerCase();
+      `${btn.getAttribute("aria-label") || ""} ${btn.getAttribute("title") || ""
+        } ${typeof btn.className === "string" ? btn.className : ""} ${btn.id || ""
+        }`.toLowerCase();
 
     // 寻找发送按钮
     const findSendButton = (input) => {
@@ -237,7 +235,7 @@
           get: () => 13,
           configurable: true,
         });
-      } catch (e) {}
+      } catch (e) { }
       return ev;
     };
 
@@ -259,7 +257,7 @@
           input.tagName === "TEXTAREA" || input.tagName === "INPUT"
             ? input.value.trim().length > 0
             : (input.innerText || "").trim().length > 0;
-        
+
         // 没有文本就是发送成功了，返回
         if (!stillHasText) return;
 
@@ -398,14 +396,14 @@
     },
     createSelector(config, appendTo) {
       const selector = this.createAs(
-          "div",
-          {
-            className:
-              "bilibili-player-block-string-type bpui-component bpui-selectmenu selectmenu-mode-absolute",
-            style: "width:" + config.width,
-          },
-          appendTo,
-        ),
+        "div",
+        {
+          className:
+            "bilibili-player-block-string-type bpui-component bpui-selectmenu selectmenu-mode-absolute",
+          style: "width:" + config.width,
+        },
+        appendTo,
+      ),
         selected = config.datas.find((item) => item.value == config.initValue),
         label = this.createAs(
           "div",
@@ -622,7 +620,7 @@
     saveState(key, state) {
       try {
         localStorage.setItem(key, JSON.stringify(state));
-      } catch (e) {}
+      } catch (e) { }
     },
     loadState(key, defaults) {
       try {
@@ -880,9 +878,9 @@
         sub.subtitles = (sub.subtitles || []).map((it) =>
           it.subtitle_url
             ? {
-                ...it,
-                subtitle_url: it.subtitle_url.replace(/https?:\/\//, "//"),
-              }
+              ...it,
+              subtitle_url: it.subtitle_url.replace(/https?:\/\//, "//"),
+            }
             : it,
         );
         return { ...sub, allow_submit: false };
@@ -984,14 +982,14 @@
       this.data = data;
       this.currentLan = lan || null;
       const settingDiv = elements.createAs(
-          "div",
-          {
-            style:
-              "position: fixed;top: 0;bottom: 0;left: 0;right: 0;background: transparent;pointer-events:none;z-index: 1048576;" +
-              (download ? "display:none" : ""),
-          },
-          document.body,
-        ),
+        "div",
+        {
+          style:
+            "position: fixed;top: 0;bottom: 0;left: 0;right: 0;background: transparent;pointer-events:none;z-index: 1048576;" +
+            (download ? "display:none" : ""),
+        },
+        document.body,
+      ),
         panel = (this.panelElement = elements.createAs(
           "div",
           {
@@ -1026,9 +1024,8 @@
           target: "_blank",
           style:
             "position:absolute;right:0;top:0;color:#606060;font-size:13px;white-space:nowrap;",
-          innerHTML: `当前版本：${
-            (typeof GM_info != "undefined" && GM_info.script.version) || "1.0"
-          }`,
+          innerHTML: `当前版本：${(typeof GM_info != "undefined" && GM_info.script.version) || "1.0"
+            }`,
         },
         header,
       );
@@ -1042,14 +1039,14 @@
         header,
       );
       const resizeContainer = (this.resizeContainer = elements.createAs(
-          "div",
-          {
-            className: "subtitle-textarea-resize-box",
-            style:
-              "position:relative;width:500px;min-width:310px;height:410px;min-height:180px;max-width:calc(100vw - 40px);max-height:calc(100vh - 170px);",
-          },
-          panel,
-        )),
+        "div",
+        {
+          className: "subtitle-textarea-resize-box",
+          style:
+            "position:relative;width:500px;min-width:310px;height:410px;min-height:180px;max-width:calc(100vw - 40px);max-height:calc(100vh - 170px);",
+        },
+        panel,
+      )),
         textArea = (this.textArea = elements.createAs(
           "textarea",
           {
@@ -1081,8 +1078,8 @@
       const availableLanguages =
         this.currentLan && typeof bilibiliCCHelper !== "undefined"
           ? (bilibiliCCHelper.subtitle?.subtitles || []).filter(
-              (item) => item.lan !== "close" && item.lan !== "local",
-            )
+            (item) => item.lan !== "close" && item.lan !== "local",
+          )
           : [];
       if (availableLanguages.length) {
         const languagePanel = elements.createAs(
@@ -1282,9 +1279,9 @@
         const maxWidth = Math.max(minWidth, window.innerWidth - 40),
           maxHeight = Math.max(minHeight, window.innerHeight - 170);
         const width = Math.max(
-            minWidth,
-            Math.min(maxWidth, startWidth + e.clientX - startX),
-          ),
+          minWidth,
+          Math.min(maxWidth, startWidth + e.clientX - startX),
+        ),
           height = Math.max(
             minHeight,
             Math.min(maxHeight, startHeight + e.clientY - startY),
@@ -1363,9 +1360,8 @@
         {
           className: "copy-success-toast",
           innerText: message,
-          style: `position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:1048579;background:${
-            type === "error" ? "#e85d5d" : "#20b26b"
-          };color:#fff;padding:12px 22px;border-radius:6px;font-size:14px;line-height:1.4;box-shadow:0 3px 12px rgba(0,0,0,.28);pointer-events:none;white-space:nowrap;animation:none;`,
+          style: `position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:1048579;background:${type === "error" ? "#e85d5d" : "#20b26b"
+            };color:#fff;padding:12px 22px;border-radius:6px;font-size:14px;line-height:1.4;box-shadow:0 3px 12px rgba(0,0,0,.28);pointer-events:none;white-space:nowrap;animation:none;`,
         },
         document.body,
       );
@@ -1420,9 +1416,8 @@
       });
       this.actionButton.href = URL.createObjectURL(blobResult);
       this.openTabButton.href = URL.createObjectURL(blobResult);
-      this.actionButton.download = `${
-        bilibiliCCHelper.getInfo("h1Title") || document.title
-      }.${type}`;
+      this.actionButton.download = `${bilibiliCCHelper.getInfo("h1Title") || document.title
+        }.${type}`;
       if (download) {
         const url = this.actionButton.href;
         this.actionButton.click();
@@ -1630,12 +1625,12 @@
           !offset
             ? this.data
             : {
-                body: this.data.body.map(({ from, to, content }) => ({
-                  from: from - offset,
-                  to: to - offset,
-                  content,
-                })),
-              },
+              body: this.data.body.map(({ from, to, content }) => ({
+                from: from - offset,
+                to: to - offset,
+                content,
+              })),
+            },
         )
         .then(() => {
           if ("function" == typeof this.statusHandler) this.statusHandler(true);
@@ -1957,14 +1952,14 @@
       );
       this.fontStyle = elements.createAs("style", { type: "text/css" }, btn);
       const panel = (this.panel = elements.createAs(
-          "div",
-          {
-            id: "subtitle-setting-panel",
-            style:
-              "position: absolute;bottom: 28px;right: 30px;background: white;border-radius: 4px;text-align: left;padding: 13px;display: none;cursor:default;",
-          },
-          btn,
-        )),
+        "div",
+        {
+          id: "subtitle-setting-panel",
+          style:
+            "position: absolute;bottom: 28px;right: 30px;background: white;border-radius: 4px;text-align: left;padding: 13px;display: none;cursor:default;",
+        },
+        btn,
+      )),
         languageDiv = elements.createAs(
           "div",
           { innerHTML: "<<div>字幕</div>" },
@@ -2193,7 +2188,7 @@
     },
     initUI() {
       const downloadBtn = (this.downloadBtn =
-          this.panel.nextElementSibling.cloneNode()),
+        this.panel.nextElementSibling.cloneNode()),
         selector = this.panel.querySelector("ul"),
         selectedItem = selector.querySelector(
           "li.bui-select-item.bui-select-item-active",
@@ -2590,7 +2585,7 @@
           GM_setValue(provider.storageKey, { text: promptText, ts: Date.now() });
           stored = true;
         }
-      } catch (e) {}
+      } catch (e) { }
 
       await utils.copy(promptText);
 
@@ -2624,7 +2619,7 @@
       if (!languages.length) throw "当前视频没有可用的在线字幕";
       const lan =
         encoder.currentLan &&
-        languages.some((item) => item.lan === encoder.currentLan)
+          languages.some((item) => item.lan === encoder.currentLan)
           ? encoder.currentLan
           : languages[0].lan;
       const data = await this.getSubtitle(lan);
@@ -3047,7 +3042,7 @@
       };
       const [background, shadow, hoverShadow] =
         palettes[providerKey][variant];
-     
+
       // 按钮的描述
       const titles = {
         normal: `把当前视频的字幕发送给 ${provider.name}，自动整理成 Obsidian 笔记`,
@@ -3089,11 +3084,11 @@
             variant === "local"
               ? (ev) => this.sendLocalAsrToAI(providerKey, ev.currentTarget)
               : this.guardSubtitleAction((ev) => {
-                  this._sendToAI(providerKey, {
-                    btn: ev.currentTarget,
-                    withTimestamp: variant === "timestamp",
-                  });
-                }),
+                this._sendToAI(providerKey, {
+                  btn: ev.currentTarget,
+                  withTimestamp: variant === "timestamp",
+                });
+              }),
         },
         parent,
       );
@@ -3165,7 +3160,7 @@
           oncontextmenu: function (e) {
             e.preventDefault();
             e.stopPropagation();
-            self.showFloatingButtonMenu(e.clientX, e.clientY);
+            self.recreateFloatingButtonMenu(e.clientX, e.clientY);
             return false;
           },
         },
@@ -3463,7 +3458,7 @@
         if (!languages.length) throw "当前视频没有可用的在线字幕";
         const lan =
           encoder.currentLan &&
-          languages.some((item) => item.lan === encoder.currentLan)
+            languages.some((item) => item.lan === encoder.currentLan)
             ? encoder.currentLan
             : languages[0].lan;
         const data = await this.getSubtitle(lan);
@@ -3923,14 +3918,12 @@
         .join("\n");
     },
 
-    // [4.1] 剪贴板统一走 utils.copy（保留方法名，避免大量调用点修改）
-    copyTextToClipboard(text) {
-      return utils.copy(text);
-    },
-
-    showFloatingButtonMenu(x, y) {
+    recreateFloatingButtonMenu(x, y) {
+      // 先删除旧的
       const oldMenu = document.getElementById("cc-subtitle-button-menu");
       oldMenu && oldMenu.remove();
+
+      // 创建菜单
       const menu = elements.createAs(
         "div",
         {
@@ -3941,6 +3934,7 @@
         document.body,
       );
 
+      // 定义关闭函数
       let closeHandler = null;
       const closeMenu = () => {
         if (closeHandler) {
@@ -3949,6 +3943,8 @@
         }
         menu.remove();
       };
+
+      // 定义一个添加按钮的函数
       const addItem = (label, handler) =>
         elements.createAs(
           "div",
@@ -3970,6 +3966,7 @@
           menu,
         );
 
+      // 添加各种按钮
       addItem("打开字幕下载窗口", () => this.openDownloadDialog());
       addItem("批量下载字幕", () => this.openBatchDialog());
       addItem("复制当前 SRT 字幕", () => this.copyCurrentSubtitleSRT());
@@ -4119,10 +4116,10 @@
       const pages = videoData.pages || state.pages || [];
       const pageItems = Array.isArray(pages)
         ? unique(
-            pages
-              .map((item, index) => normalize(item, index, inherited))
-              .filter(Boolean),
-          )
+          pages
+            .map((item, index) => normalize(item, index, inherited))
+            .filter(Boolean),
+        )
         : [];
       if (pageItems.length)
         return {
@@ -4141,10 +4138,10 @@
         [];
       const seasonItems = Array.isArray(seasonEpisodes)
         ? unique(
-            seasonEpisodes
-              .map((item, index) => normalize(item, index, inherited))
-              .filter(Boolean),
-          )
+          seasonEpisodes
+            .map((item, index) => normalize(item, index, inherited))
+            .filter(Boolean),
+        )
         : [];
       if (seasonItems.length)
         return {
@@ -4546,7 +4543,7 @@
       let savedCols = "auto";
       try {
         savedCols = localStorage.getItem(COLS_KEY) || "auto";
-      } catch (e) {}
+      } catch (e) { }
       columnsSelect.value = COLS_OPTIONS.includes(savedCols)
         ? savedCols
         : "auto";
@@ -4571,7 +4568,7 @@
         }
         try {
           localStorage.setItem(COLS_KEY, value);
-        } catch (e) {}
+        } catch (e) { }
       };
       columnsSelect.onchange = applyColumns;
       applyColumns();
@@ -4691,7 +4688,7 @@
           if (!languages.length) throw "当前视频没有可用的在线字幕";
           const lan =
             encoder.currentLan &&
-            languages.some((item) => item.lan === encoder.currentLan)
+              languages.some((item) => item.lan === encoder.currentLan)
               ? encoder.currentLan
               : languages[0].lan;
           return this.getSubtitle(lan).then((data) =>
